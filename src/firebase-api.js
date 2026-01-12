@@ -10,10 +10,7 @@ const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
-
-// Load config
-const configPath = path.join(__dirname, '..', 'config.json');
-const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+const config = require('./config');
 
 // Cache for analytics data
 const analyticsCache = new Map();
