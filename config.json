@@ -125,7 +125,8 @@
     "enabled": false
   },
   "allowedIPs": [
-    "143.44.184.140"
+    "143.44.184.140",
+    "13.229.224.137"
   ],
   "refreshInterval": 60000,
   "branchHistoryDays": 30
