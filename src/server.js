@@ -17,7 +17,29 @@ const discordRouter = require('./routes/discord');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Trust proxy headers (needed for App Runner to get real client IP)
+app.set('trust proxy', true);
+
 app.use(express.json());
+
+// IP allowlist middleware
+const allowedIPs = config.allowedIPs || [];
+if (allowedIPs.length > 0) {
+  app.use((req, res, next) => {
+    const clientIP = req.ip || req.connection.remoteAddress;
+    // Normalize IPv6-mapped IPv4 addresses
+    const normalizedIP = clientIP.replace(/^::ffff:/, '');
+
+    if (allowedIPs.includes(normalizedIP) || allowedIPs.includes(clientIP)) {
+      return next();
+    }
+
+    log.warn('server', 'Blocked request from unauthorized IP', { ip: normalizedIP });
+    res.status(403).send('Access denied');
+  });
+  log.info('server', `IP allowlist enabled: ${allowedIPs.length} IPs allowed`);
+}
+
 app.use(express.static(path.join(__dirname, '../public')));
 
 // SSE endpoint for real-time updates
