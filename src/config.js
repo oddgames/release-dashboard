@@ -71,6 +71,7 @@ const config = {
   tracks: baseConfig.tracks || [],
   projects: baseConfig.projects || {},
   jobs: baseConfig.jobs || [],
+  allowedIPs: baseConfig.allowedIPs || [],
   refreshInterval: parseInt(process.env.REFRESH_INTERVAL) || baseConfig.refreshInterval || 60000,
   branchHistoryDays: parseInt(process.env.BRANCH_HISTORY_DAYS) || baseConfig.branchHistoryDays || 30
 };

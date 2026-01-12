@@ -20,5 +20,14 @@ run:
   # Secrets are configured in AWS Console / CLI, not here
   # They will be injected as environment variables
 
+# Health check configuration
+# Uses /health endpoint which bypasses IP allowlist
+health_check:
+  path: /health
+  interval: 10
+  timeout: 5
+  healthy_threshold: 1
+  unhealthy_threshold: 5
+
 # Resource configuration (can be adjusted in AWS Console)
 # Default: 1 vCPU, 2 GB RAM (sufficient for 4 users)

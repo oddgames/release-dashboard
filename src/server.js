@@ -22,6 +22,11 @@ app.set('trust proxy', true);
 
 app.use(express.json());
 
+// Health check endpoint (before IP allowlist so App Runner can access it)
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: Date.now() });
+});
+
 // IP allowlist middleware
 const allowedIPs = config.allowedIPs || [];
 if (allowedIPs.length > 0) {
