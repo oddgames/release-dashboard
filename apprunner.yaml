@@ -1,0 +1,24 @@
+# AWS App Runner configuration
+# This file tells App Runner how to build and run the application
+
+version: 1.0
+runtime: nodejs18
+
+build:
+  commands:
+    build:
+      - npm ci --only=production
+
+run:
+  command: node src/server.js
+  network:
+    port: 3000
+    env: PORT
+  env:
+    - name: NODE_ENV
+      value: "production"
+  # Secrets are configured in AWS Console / CLI, not here
+  # They will be injected as environment variables
+
+# Resource configuration (can be adjusted in AWS Console)
+# Default: 1 vCPU, 2 GB RAM (sufficient for 4 users)

@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Environment and secrets
+.env
+config.json
+
+# Local data
+data/
+release-notes/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Fastlane secrets
+fastlane/*.p8
+fastlane/*.json
+fastlane/AuthKey_*
+
+# Build artifacts
+dist/
+build/
+
+# Cache
+.cache/

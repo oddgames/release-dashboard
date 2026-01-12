@@ -1,0 +1,100 @@
+{
+  "jenkins": {
+    "baseUrl": "",
+    "username": "",
+    "apiToken": ""
+  },
+  "ai": {
+    "provider": "gemini",
+    "apiKey": "",
+    "model": "gemini-2.5-flash"
+  },
+  "sentry": {
+    "baseUrl": "https://sentry.io",
+    "authToken": "",
+    "organization": "",
+    "statsPeriod": "14d"
+  },
+  "tracks": [
+    {
+      "id": "dev",
+      "displayName": "Dev",
+      "source": "jenkins",
+      "buildType": "Debug",
+      "order": 1
+    },
+    {
+      "id": "release",
+      "displayName": "Release",
+      "source": "jenkins",
+      "buildType": "Release",
+      "order": 2
+    },
+    {
+      "id": "storeInternal",
+      "displayName": "Internal",
+      "source": "store",
+      "iosSource": "testflight",
+      "androidSource": "internal",
+      "order": 3
+    },
+    {
+      "id": "storeAlpha",
+      "displayName": "Alpha",
+      "source": "store",
+      "iosSource": "betaGroup",
+      "iosBetaGroupName": "Alpha",
+      "androidSource": "alpha",
+      "order": 4
+    },
+    {
+      "id": "storeRelease",
+      "displayName": "Release",
+      "source": "store",
+      "iosSource": "live",
+      "androidSource": "production",
+      "order": 5
+    }
+  ],
+  "projects": {
+    "Example Project": {
+      "languages": ["en"],
+      "plasticRepo": "",
+      "sentryProject": ""
+    }
+  },
+  "fastlane": {
+    "webhookSecret": "",
+    "appStoreConnect": {
+      "keyId": "",
+      "issuerId": "",
+      "keyPath": ""
+    },
+    "googlePlay": {
+      "jsonKeyPath": "",
+      "developerId": ""
+    }
+  },
+  "jobs": [
+    {
+      "name": "ExampleProject-iOS",
+      "displayName": "Example Project",
+      "platform": "ios",
+      "bundleId": "com.example.app",
+      "jenkinsJob": "example_project_ios"
+    },
+    {
+      "name": "ExampleProject-Android",
+      "displayName": "Example Project",
+      "platform": "android",
+      "bundleId": "com.example.app",
+      "jenkinsJob": "example_project_android"
+    }
+  ],
+  "discord": {
+    "webhookUrl": "",
+    "enabled": false
+  },
+  "refreshInterval": 60000,
+  "branchHistoryDays": 30
+}

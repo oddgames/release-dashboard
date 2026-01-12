@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Release Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="toast" class="toast"></div>
+
+  <!-- Release Notes Modal -->
+  <div id="releaseNotesModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Release Notes</h2>
+        <button class="modal-close" onclick="closeReleaseNotesModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="releaseNotesLoading" class="loading-state">
+          <div class="spinner"></div>
+          <p>Loading changes...</p>
+        </div>
+        <div id="releaseNotesEditor" style="display: none;">
+          <div class="release-notes-info">
+            <span id="releaseNotesProject"></span>
+            <span id="releaseNotesRange"></span>
+            <span id="releaseNotesCommitCount"></span>
+          </div>
+
+          <!-- Tabs for Changes vs Release Notes -->
+          <div class="release-notes-tabs">
+            <button class="tab-btn active" data-tab="changes" onclick="switchReleaseNotesTab('changes')">Changes</button>
+            <button class="tab-btn" data-tab="notes" onclick="switchReleaseNotesTab('notes')">Release Notes</button>
+          </div>
+
+          <!-- Changes Tab -->
+          <div id="releaseNotesChangesTab" class="tab-content active">
+            <div class="changes-list" id="releaseNotesChangesList"></div>
+            <div class="modal-actions">
+              <button id="generateNotesBtn" onclick="generateNotesFromChanges()" class="btn-secondary">Generate Release Notes</button>
+              <button onclick="switchReleaseNotesTab('notes')" class="btn-primary">Write Notes Manually</button>
+            </div>
+          </div>
+
+          <!-- Release Notes Tab -->
+          <div id="releaseNotesNotesTab" class="tab-content">
+            <div class="language-tabs">
+              <div id="languageTabs" class="tabs"></div>
+            </div>
+            <textarea id="releaseNotesText" rows="10" placeholder="Write your release notes here..."></textarea>
+            <div class="modal-actions">
+              <span id="releaseNotesSaveStatus" class="save-status"></span>
+              <button id="retranslateBtn" onclick="retranslateNotes()" class="btn-secondary">Re-translate All</button>
+              <button id="distributeBtn" onclick="confirmDistribute()" class="btn-primary">Distribute</button>
+            </div>
+          </div>
+        </div>
+        <div id="releaseNotesError" class="error-state" style="display: none;">
+          <p id="errorMessage"></p>
+          <button onclick="closeReleaseNotesModal()" class="btn-secondary">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Compare Changesets Modal -->
+  <div id="compareModal" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2>Compare Changesets</h2>
+        <button class="modal-close" onclick="closeCompareModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <!-- Changeset Selection -->
+        <div id="compareSelector" class="compare-selector">
+          <div class="compare-info">
+            <span id="compareProject"></span>
+            <span id="compareBranch"></span>
+          </div>
+          <div class="compare-dropdowns">
+            <div class="compare-field">
+              <label for="fromChangeset">From:</label>
+              <select id="fromChangeset">
+                <option value="">Select changeset...</option>
+              </select>
+            </div>
+            <div class="compare-field">
+              <label for="toChangeset">To:</label>
+              <select id="toChangeset">
+                <option value="">Select changeset...</option>
+              </select>
+            </div>
+            <button id="compareBtn" onclick="runComparison()" class="btn-primary">Compare</button>
+          </div>
+        </div>
+
+        <!-- Loading State -->
+        <div id="compareLoading" class="loading-state" style="display: none;">
+          <div class="spinner"></div>
+          <p>Analyzing changes...</p>
+        </div>
+
+        <!-- Results -->
+        <div id="compareResults" style="display: none;">
+          <div class="compare-stats">
+            <span id="compareChangesetCount"></span>
+            <span id="compareMergeCount"></span>
+            <span id="compareFileCount"></span>
+          </div>
+
+          <!-- Tabs -->
+          <div class="compare-tabs">
+            <button class="tab-btn active" data-tab="summary" onclick="switchCompareTab('summary')">Summary</button>
+            <button class="tab-btn" data-tab="changesets" onclick="switchCompareTab('changesets')">Changesets</button>
+            <button class="tab-btn" data-tab="merges" onclick="switchCompareTab('merges')">Merges</button>
+            <button class="tab-btn" data-tab="files" onclick="switchCompareTab('files')">Files</button>
+          </div>
+
+          <!-- Tab Content -->
+          <div id="compareSummaryTab" class="tab-content active">
+            <div id="compareSummaryContent" class="summary-content"></div>
+          </div>
+          <div id="compareChangesetsTab" class="tab-content">
+            <div id="compareChangesetsContent" class="list-content"></div>
+          </div>
+          <div id="compareMergesTab" class="tab-content">
+            <div id="compareMergesContent" class="list-content"></div>
+          </div>
+          <div id="compareFilesTab" class="tab-content">
+            <div id="compareFilesContent" class="list-content"></div>
+          </div>
+        </div>
+
+        <!-- Error State -->
+        <div id="compareError" class="error-state" style="display: none;">
+          <p id="compareErrorMessage"></p>
+          <button onclick="closeCompareModal()" class="btn-secondary">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Download Links Modal -->
+  <div id="downloadModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Download Links</h2>
+        <button class="modal-close" onclick="closeDownloadModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="downloadLinksContent" class="download-links-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Build History Modal -->
+  <div id="buildHistoryModal" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2>Build History</h2>
+        <button class="modal-close" onclick="closeBuildHistoryModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="buildHistoryLoading" class="loading-state">
+          <div class="spinner"></div>
+          <p>Loading build history...</p>
+        </div>
+        <div id="buildHistoryContent" style="display: none;">
+          <div id="buildHistoryInfo" class="build-history-info"></div>
+          <div id="buildHistoryList" class="build-history-list"></div>
+        </div>
+        <div id="buildHistoryError" class="error-state" style="display: none;">
+          <p id="buildHistoryErrorMessage"></p>
+          <button onclick="closeBuildHistoryModal()" class="btn-secondary">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Jenkins Login Modal -->
+  <div id="jenkinsLoginModal" class="modal">
+    <div class="modal-content modal-small">
+      <div class="modal-header">
+        <h2>Jenkins Login Required</h2>
+        <button class="modal-close" onclick="closeJenkinsLoginModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-bottom: 16px; color: #aaa;">Enter your Jenkins credentials to promote builds to Alpha.</p>
+        <div class="form-group">
+          <label for="jenkinsUsername">Username</label>
+          <input type="text" id="jenkinsUsername" placeholder="Jenkins username" autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label for="jenkinsPassword">Password / API Token</label>
+          <input type="password" id="jenkinsPassword" placeholder="Password or API token" autocomplete="current-password">
+        </div>
+        <div id="jenkinsLoginError" class="error-message" style="display: none;"></div>
+        <div class="modal-actions">
+          <button onclick="closeJenkinsLoginModal()" class="btn-secondary">Cancel</button>
+          <button id="jenkinsLoginBtn" onclick="submitJenkinsLogin()" class="btn-primary">Login & Promote</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <header class="compact-header">
+      <span id="lastUpdated">-</span>
+      <span id="refreshStatus" class="refresh-status"></span>
+    </header>
+
+    <div class="table-container">
+      <table class="build-table">
+        <thead>
+          <tr>
+            <th class="col-project">Project</th>
+            <th class="col-plastic">
+              <img src="/icons/plastic.ico" alt="Plastic" class="header-icon">
+            </th>
+            <th class="col-track">
+              <img src="/icons/jenkins.svg" alt="Jenkins" class="header-icon">
+              Debug
+            </th>
+            <th class="col-track">
+              <img src="/icons/jenkins.svg" alt="Jenkins" class="header-icon">
+              Release
+            </th>
+            <th class="col-track">
+              <img src="/icons/store.svg" alt="Store" class="header-icon">
+              Internal
+            </th>
+            <th class="col-track">
+              <img src="/icons/store.svg" alt="Store" class="header-icon">
+              Alpha
+            </th>
+            <th class="col-track">
+              <img src="/icons/store.svg" alt="Store" class="header-icon">
+              Rollout
+            </th>
+            <th class="col-track">
+              <img src="/icons/store.svg" alt="Store" class="header-icon">
+              Store
+            </th>
+            <th class="col-track col-divider-left">
+              <img src="/icons/store.svg" alt="Store" class="header-icon">
+              Prev Store
+            </th>
+          </tr>
+        </thead>
+        <tbody id="buildTableBody">
+          <tr>
+            <td colspan="9" class="empty-state">Loading...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Crashboard Section -->
+    <div class="crashboard-section">
+      <div class="crashboard-header">
+        <h2>
+          <img src="/icons/sentry.svg" alt="Crashboard" class="crashboard-icon">
+          Crashboard
+        </h2>
+        <div class="crashboard-controls">
+          <span class="crashboard-period">Last 7 days</span>
+          <input type="text" id="crashboardSearch" placeholder="Search issues..." class="crashboard-search">
+        </div>
+      </div>
+      <div id="crashboardContent" class="crashboard-content">
+        <div class="crashboard-loading">Loading crash data...</div>
+      </div>
+    </div>
+
+    <details class="legend">
+      <summary>Legend & Help</summary>
+      <div class="legend-content">
+        <div class="legend-section">
+          <h4>Icon Colors</h4>
+          <div class="legend-items">
+            <span class="legend-item"><span class="color-dot green"></span> Success - Build completed</span>
+            <span class="legend-item"><span class="color-dot red"></span> Failed - Build failed</span>
+            <span class="legend-item"><span class="color-dot yellow"></span> Unstable - Built but upload failed</span>
+            <span class="legend-item"><span class="color-dot blue"></span> Building - In progress</span>
+            <span class="legend-item"><span class="color-dot purple"></span> Queued - Waiting to build</span>
+            <span class="legend-item"><span class="color-dot yellow"></span> Review - Pending app review</span>
+            <span class="legend-item"><span class="color-dot gray"></span> None - No build available</span>
+          </div>
+        </div>
+        <div class="legend-section">
+          <h4>Columns</h4>
+          <div class="legend-items">
+            <span class="legend-item"><strong>Plastic</strong> - Latest changeset in source control</span>
+            <span class="legend-item"><strong>Debug</strong> - Development builds (Debug config)</span>
+            <span class="legend-item"><strong>Release</strong> - Release builds (optimized)</span>
+            <span class="legend-item"><strong>Prev Release</strong> - Previous App Store / Play Store version</span>
+            <span class="legend-item"><strong>Store Internal</strong> - TestFlight / Play Internal</span>
+            <span class="legend-item"><strong>Store Alpha</strong> - TestFlight Alpha / Play Closed</span>
+            <span class="legend-item"><strong>Store Release</strong> - App Store / Play Store</span>
+          </div>
+        </div>
+        <div class="legend-section">
+          <h4>Interactions</h4>
+          <div class="legend-items">
+            <span class="legend-item"><strong>Click changeset</strong> - Compare changesets in Plastic</span>
+            <span class="legend-item"><strong>Click icon</strong> - Open build in Jenkins or download</span>
+            <span class="legend-item"><strong>Click ...</strong> - Build menu (rebuild options)</span>
+            <span class="legend-item"><strong>Hover icon</strong> - Show full version & status details</span>
+          </div>
+        </div>
+        <div class="legend-section">
+          <h4>Store Vitals</h4>
+          <div class="legend-items">
+            <span class="legend-item"><img src="/icons/crash.svg" alt="Crash" style="width:12px;height:12px;filter:invert(50%);vertical-align:middle;margin-right:4px"><strong>Crash</strong> - iOS: crashes/day | Android: crash rate %</span>
+            <span class="legend-item"><img src="/icons/anr.svg" alt="ANR" style="width:12px;height:12px;filter:invert(50%);vertical-align:middle;margin-right:4px"><strong>ANR %</strong> - Android not responding rate</span>
+            <span class="legend-item"><span class="color-dot green"></span> Good | <span class="color-dot yellow"></span> Warning | <span class="color-dot red"></span> Bad</span>
+          </div>
+        </div>
+        <div class="legend-section">
+          <h4>Console Links</h4>
+          <div class="legend-items">
+            <span class="legend-item"><img src="/icons/appstoreconnect.svg" alt="App Store Connect" style="width:12px;height:12px;filter:invert(50%);vertical-align:middle;margin-right:4px"><strong>Apple</strong> - Open App Store Connect</span>
+            <span class="legend-item"><img src="/icons/playconsole.svg" alt="Play Console" style="width:12px;height:12px;filter:invert(50%);vertical-align:middle;margin-right:4px"><strong>Google</strong> - Open Google Play Console</span>
+          </div>
+        </div>
+        <div class="legend-section">
+          <h4>Error Tracking</h4>
+          <div class="legend-items">
+            <span class="legend-item"><img src="/icons/sentry.svg" alt="Sentry" style="width:12px;height:12px;filter:invert(50%);vertical-align:middle;margin-right:4px"><strong>Sentry</strong> - Unresolved issues (last 7 days)</span>
+            <span class="legend-item"><span class="color-dot green"></span> 0 issues | <span class="color-dot red"></span> Has issues</span>
+          </div>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

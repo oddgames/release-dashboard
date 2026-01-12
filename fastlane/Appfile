@@ -1,0 +1,13 @@
+# App Store Connect
+app_identifier "au.com.oddgames.trucksoffroad" # Default app identifier
+team_id "69a6de7f-9c3d-47e3-e053-5b8c7c11a4d1" # App Store Connect Issuer ID
+
+# For all apps, we use the same team
+for_platform :ios do
+  team_id "69a6de7f-9c3d-47e3-e053-5b8c7c11a4d1"
+end
+
+# Google Play
+for_platform :android do
+  json_key_file "fastlane/google_play_key.json"
+end

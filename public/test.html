@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Release Notes Test</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .test-container {
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+    }
+    .test-section {
+      background: #252540;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .test-section h2 {
+      margin-bottom: 16px;
+      font-size: 1.1rem;
+    }
+    .form-group {
+      margin-bottom: 12px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      color: #888;
+      font-size: 0.85rem;
+    }
+    .form-group input, .form-group textarea, .form-group select {
+      width: 100%;
+      background: #1a1a2e;
+      border: 1px solid #333;
+      border-radius: 6px;
+      color: #eee;
+      padding: 10px;
+      font-family: inherit;
+    }
+    .form-group textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+    .btn {
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      border: none;
+      margin-right: 8px;
+    }
+    .btn-primary { background: #60a5fa; color: #000; }
+    .btn-primary:hover { background: #3b82f6; }
+    .btn-primary:disabled { background: #444; color: #666; cursor: wait; }
+    .btn-secondary { background: #333; color: #fff; }
+    .btn-secondary:hover { background: #444; }
+    .result-box {
+      background: #1a1a2e;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 16px;
+      white-space: pre-wrap;
+      font-family: monospace;
+      font-size: 0.85rem;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .result-box.error { border-color: #f87171; color: #f87171; }
+    .result-box.success { border-color: #4ade80; }
+    .language-results {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .language-result {
+      background: #1a1a2e;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .language-result h4 {
+      color: #60a5fa;
+      margin-bottom: 8px;
+      font-size: 0.9rem;
+    }
+    .language-result pre {
+      white-space: pre-wrap;
+      font-size: 0.8rem;
+      color: #ccc;
+    }
+    .status { font-size: 0.85rem; margin-top: 8px; color: #888; }
+    .status.loading { color: #60a5fa; }
+    .back-link { color: #60a5fa; text-decoration: none; }
+    .back-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="test-container">
+    <p><a href="/" class="back-link">&larr; Back to Dashboard</a></p>
+    <h1>Release Notes Test</h1>
+
+    <!-- Test Generate from Commits -->
+    <div class="test-section">
+      <h2>Generate Release Notes from Commits</h2>
+      <div class="form-group">
+        <label>Project</label>
+        <select id="projectSelect">
+          <option value="trucks-off-road">Trucks Off Road</option>
+          <option value="monster-truck-destruction">Monster Truck Destruction</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Sample Commit Messages (one per line)</label>
+        <textarea id="commitMessages">- Fixed crash when loading large maps (John)
+- Added new monster truck "Bone Crusher" (Sarah)
+- Improved physics for mud terrain (Mike)
+- Updated UI for settings menu (John)
+- Fixed audio bug in multiplayer (Sarah)
+- Optimized texture loading for older devices (Mike)</textarea>
+      </div>
+      <button class="btn btn-primary" onclick="testGenerate()" id="generateBtn">Generate Release Notes</button>
+      <div id="generateStatus" class="status"></div>
+      <div id="generateResults" class="language-results"></div>
+    </div>
+
+    <!-- Test Translation Only -->
+    <div class="test-section">
+      <h2>Translate Existing Notes</h2>
+      <div class="form-group">
+        <label>Project (for language config)</label>
+        <select id="translateProjectSelect">
+          <option value="trucks-off-road">Trucks Off Road</option>
+          <option value="monster-truck-destruction">Monster Truck Destruction</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>English Release Notes</label>
+        <textarea id="englishNotes">New Features
+- Introducing the all-new "Bone Crusher" monster truck with enhanced suspension and power
+
+Improvements
+- Smoother mud terrain physics for a more realistic off-road experience
+- Refreshed settings menu with easier navigation
+- Faster texture loading on older devices
+
+Bug Fixes
+- Resolved a crash that occurred when loading large maps
+- Fixed audio cutting out during multiplayer sessions</textarea>
+      </div>
+      <button class="btn btn-primary" onclick="testTranslate()" id="translateBtn">Translate to All Languages</button>
+      <div id="translateStatus" class="status"></div>
+      <div id="translateResults" class="language-results"></div>
+    </div>
+
+    <!-- API Status -->
+    <div class="test-section">
+      <h2>API Status</h2>
+      <button class="btn btn-secondary" onclick="checkLanguages()">Check Project Languages</button>
+      <div id="apiResult" class="result-box" style="display: none;"></div>
+    </div>
+  </div>
+
+  <script>
+    const languageNames = {
+      'en': 'English', 'de': 'German', 'fr': 'French', 'es': 'Spanish',
+      'it': 'Italian', 'pt': 'Portuguese', 'ru': 'Russian', 'ja': 'Japanese',
+      'ko': 'Korean', 'zh-Hans': 'Chinese (Simplified)', 'zh-Hant': 'Chinese (Traditional)'
+    };
+
+    async function testGenerate() {
+      const btn = document.getElementById('generateBtn');
+      const status = document.getElementById('generateStatus');
+      const results = document.getElementById('generateResults');
+      const projectId = document.getElementById('projectSelect').value;
+      const commits = document.getElementById('commitMessages').value;
+
+      btn.disabled = true;
+      status.className = 'status loading';
+      status.textContent = 'Generating release notes with AI...';
+      results.innerHTML = '';
+
+      try {
+        // First, we need to use the direct generation endpoint
+        // Since we're testing, let's call a test endpoint
+        const response = await fetch('/api/test-generate-notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId, commitMessages: commits })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Generation failed');
+        }
+
+        status.className = 'status';
+        status.textContent = `Generated in ${data.duration}ms`;
+
+        // Display results
+        for (const [lang, text] of Object.entries(data.releaseNotes)) {
+          results.innerHTML += `
+            <div class="language-result">
+              <h4>${languageNames[lang] || lang} (${lang})</h4>
+              <pre>${escapeHtml(text)}</pre>
+            </div>
+          `;
+        }
+      } catch (error) {
+        status.className = 'status';
+        status.textContent = '';
+        results.innerHTML = `<div class="result-box error">${escapeHtml(error.message)}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function testTranslate() {
+      const btn = document.getElementById('translateBtn');
+      const status = document.getElementById('translateStatus');
+      const results = document.getElementById('translateResults');
+      const projectId = document.getElementById('translateProjectSelect').value;
+      const englishNotes = document.getElementById('englishNotes').value;
+
+      btn.disabled = true;
+      status.className = 'status loading';
+      status.textContent = 'Translating to all languages...';
+      results.innerHTML = '';
+
+      try {
+        const response = await fetch('/api/translate-release-notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId, englishNotes })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Translation failed');
+        }
+
+        status.className = 'status';
+        status.textContent = 'Translation complete';
+
+        // Display results
+        for (const [lang, text] of Object.entries(data.translations)) {
+          results.innerHTML += `
+            <div class="language-result">
+              <h4>${languageNames[lang] || lang} (${lang})</h4>
+              <pre>${escapeHtml(text)}</pre>
+            </div>
+          `;
+        }
+      } catch (error) {
+        status.className = 'status';
+        status.textContent = '';
+        results.innerHTML = `<div class="result-box error">${escapeHtml(error.message)}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function checkLanguages() {
+      const result = document.getElementById('apiResult');
+      const projectId = document.getElementById('projectSelect').value;
+
+      result.style.display = 'block';
+      result.className = 'result-box';
+      result.textContent = 'Loading...';
+
+      try {
+        const response = await fetch(`/api/project-languages/${projectId}`);
+        const data = await response.json();
+        result.className = 'result-box success';
+        result.textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        result.className = 'result-box error';
+        result.textContent = error.message;
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+  </script>
+</body>
+</html>

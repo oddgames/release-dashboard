@@ -1,0 +1,40 @@
+# Dependencies
+node_modules
+
+# Config with secrets (use environment variables instead)
+config.json
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Local data
+data/
+release-notes/
+
+# Test files
+*.test.js
+__tests__/
+
+# Documentation (not needed at runtime)
+*.md
+docs/
+
+# Fastlane secrets (never include in image)
+fastlane/*.p8
+fastlane/*.json
+fastlane/AuthKey_*
