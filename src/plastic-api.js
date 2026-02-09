@@ -1,22 +1,64 @@
 const { exec } = require('child_process');
 const log = require('./logger');
 
-// Cache for Plastic data (reduces repeated calls)
-const plasticCache = {
+// Generic query-based cache for Plastic SCM commands
+// Caches raw command output by exact command string - no business logic
+const queryCache = {
   data: new Map(),
-  ttl: 300000 // 5 minute TTL (plastic data doesn't change that frequently)
+  ttl: 300000, // 5 minute TTL
+  maxSize: 200, // Max entries to prevent memory bloat
+  hits: 0,
+  misses: 0
 };
 
+function getCacheKey(cmd) {
+  // Use the exact command as the cache key
+  return cmd;
+}
+
 function getCached(key) {
-  const entry = plasticCache.data.get(key);
-  if (entry && Date.now() - entry.time < plasticCache.ttl) {
+  const entry = queryCache.data.get(key);
+  if (entry && Date.now() - entry.time < queryCache.ttl) {
+    queryCache.hits++;
     return entry.value;
   }
   return null;
 }
 
 function setCache(key, value) {
-  plasticCache.data.set(key, { value, time: Date.now() });
+  // Evict oldest entries if cache is full
+  if (queryCache.data.size >= queryCache.maxSize) {
+    // Remove oldest 20% of entries
+    const entries = Array.from(queryCache.data.entries());
+    entries.sort((a, b) => a[1].time - b[1].time);
+    const toRemove = Math.ceil(queryCache.maxSize * 0.2);
+    for (let i = 0; i < toRemove; i++) {
+      queryCache.data.delete(entries[i][0]);
+    }
+    log.debug('plastic-api', `Evicted ${toRemove} old cache entries`);
+  }
+  queryCache.data.set(key, { value, time: Date.now() });
+}
+
+// Get cache stats for monitoring
+function getCacheStats() {
+  return {
+    size: queryCache.data.size,
+    maxSize: queryCache.maxSize,
+    hits: queryCache.hits,
+    misses: queryCache.misses,
+    hitRate: queryCache.hits + queryCache.misses > 0
+      ? (queryCache.hits / (queryCache.hits + queryCache.misses) * 100).toFixed(1) + '%'
+      : '0%'
+  };
+}
+
+// Clear the cache (useful for forced refresh)
+function clearCache() {
+  queryCache.data.clear();
+  queryCache.hits = 0;
+  queryCache.misses = 0;
+  log.info('plastic-api', 'Cache cleared');
 }
 
 // Parse date string like "28/10/2025 7:56:23 am" to timestamp
@@ -34,13 +76,29 @@ function parseDate(dateStr) {
 }
 
 // Execute cm command and return output (with timeout)
-function execCm(cmd, timeout = 10000) {
+// Caches results by exact command string for fast repeated queries
+function execCm(cmd, timeout = 10000, skipCache = false) {
+  // Check cache first (unless skipCache is true)
+  if (!skipCache) {
+    const cacheKey = getCacheKey(cmd);
+    const cached = getCached(cacheKey);
+    if (cached !== null) {
+      log.debug('plastic-api', `Cache hit: ${cmd.substring(0, 60)}...`);
+      return Promise.resolve(cached);
+    }
+    queryCache.misses++;
+  }
+
   return new Promise((resolve, reject) => {
     const proc = exec(cmd, { maxBuffer: 10 * 1024 * 1024, timeout }, (error, stdout, stderr) => {
       if (error) {
         log.error('plastic-api', `Command failed: ${cmd.substring(0, 80)}`, { error: error.message });
         reject(error);
         return;
+      }
+      // Cache successful results
+      if (!skipCache) {
+        setCache(getCacheKey(cmd), stdout);
       }
       resolve(stdout);
     });
@@ -115,10 +173,6 @@ async function getActiveBranches(repository, days = 30) {
 
 // Get the latest changeset number for a branch in a repository
 async function getLatestChangeset(repository, branch = 'main') {
-  const cacheKey = `latest:${repository}:${branch}`;
-  const cached = getCached(cacheKey);
-  if (cached !== null) return cached;
-
   try {
     // Convert Jenkins branch name to Plastic format
     const plasticBranch = branch === 'main' ? '/main' : `/main/${branch}`;
@@ -126,9 +180,7 @@ async function getLatestChangeset(repository, branch = 'main') {
     const cmd = `cm find changeset "where branch='${plasticBranch}' order by changesetid desc limit 1 on repository '${repository}'" --format="{changesetid}" --nototal`;
     const output = await execCm(cmd);
     const changeset = parseInt(output.trim());
-    const result = isNaN(changeset) ? null : changeset;
-    setCache(cacheKey, result);
-    return result;
+    return isNaN(changeset) ? null : changeset;
   } catch (error) {
     log.error('plastic-api', `Failed to get latest changeset: ${repository}/${branch}`, { error: error.message });
     return null;
@@ -137,10 +189,6 @@ async function getLatestChangeset(repository, branch = 'main') {
 
 // Get recent changesets with full details for a branch
 async function getRecentChangesets(repository, branch = 'main', limit = 10) {
-  const cacheKey = `recent:${repository}:${branch}:${limit}`;
-  const cached = getCached(cacheKey);
-  if (cached !== null) return cached;
-
   try {
     const plasticBranch = branch === 'main' ? '/main' : `/main/${branch}`;
     // Use order by + limit for fast lookup (on repository must come LAST in query)
@@ -165,7 +213,6 @@ async function getRecentChangesets(repository, branch = 'main', limit = 10) {
       });
     }
 
-    setCache(cacheKey, changesets);
     return changesets;
   } catch (error) {
     log.error('plastic-api', `Failed to get recent changesets: ${repository}/${branch}`, { error: error.message });
@@ -343,6 +390,141 @@ async function getChangesetList(repository, branch = 'main', limit = 30) {
   }
 }
 
+// Get all changesets reachable from toChangeset but not from fromChangeset
+// This properly follows merge history through the DAG by including all commits from merged branches
+async function getChangesetsWithMergeHistory(repository, fromChangeset, toChangeset) {
+  log.info('plastic-api', `Getting changesets with merge history: ${repository}`, { fromChangeset, toChangeset });
+
+  try {
+    const changesets = [];
+    const seen = new Set();
+
+    // Step 1: Get direct commits on main in the range
+    const directCommits = await getChangesetRange(repository, fromChangeset, toChangeset, 'main');
+    for (const commit of directCommits) {
+      if (!seen.has(commit.changeset)) {
+        seen.add(commit.changeset);
+        changesets.push({
+          changeset: commit.changeset,
+          author: commit.author,
+          message: commit.message
+        });
+      }
+    }
+
+    log.info('plastic-api', `Found ${directCommits.length} direct commits on main`);
+
+    // Step 2: Get all merges and cherry-picks in the range FROM feature branches INTO /main
+    const allMerges = await getMergesInRange(repository, fromChangeset, toChangeset);
+    const featureMerges = allMerges.filter(m =>
+      m.destBranch === 'br:/main' && m.sourceBranch !== 'br:/main'
+    );
+    const merges = featureMerges.filter(m => m.type === 'merge');
+    const cherryPicks = featureMerges.filter(m => m.type === 'cherrypick');
+    log.info('plastic-api', `Found ${merges.length} branch merges and ${cherryPicks.length} cherry-picks into br:/main`);
+
+    // Step 3: Find previous merges to avoid including already-merged commits
+    // Look back to find if any of these branches were previously merged INTO /main FROM feature branches (not cherry-picks)
+    log.info('plastic-api', 'Finding previous merges to determine commit ranges');
+    const allHistoricalMerges = await getMergesInRange(repository, Math.max(0, fromChangeset - 2000), fromChangeset);
+    const historicalMerges = allHistoricalMerges.filter(m =>
+      m.destBranch === 'br:/main' &&
+      m.sourceBranch !== 'br:/main' &&
+      m.type === 'merge'
+    );
+    const lastMergeByBranch = new Map();
+    for (const historicalMerge of historicalMerges) {
+      const existing = lastMergeByBranch.get(historicalMerge.sourceBranch);
+      if (!existing || historicalMerge.sourceChangeset > existing) {
+        lastMergeByBranch.set(historicalMerge.sourceBranch, historicalMerge.sourceChangeset);
+      }
+    }
+    log.info('plastic-api', `Found ${lastMergeByBranch.size} branches with previous merges into /main`);
+
+    // Step 4: Fetch commits from merged branches in parallel
+    // For each branch, only fetch commits since the last merge point
+    const branchFetches = merges.map(merge => {
+      const branchName = merge.sourceBranch.replace('/main/', '').replace('br:', '').replace('br:/', '');
+      // Start from the last merge point for this branch (or 0 if never merged before)
+      const startChangeset = lastMergeByBranch.get(merge.sourceBranch) || 0;
+      log.info('plastic-api', `Fetching commits from ${merge.sourceBranch} merged at cs:${merge.destChangeset} (${startChangeset} to ${merge.sourceChangeset})`);
+      return getChangesetRange(repository, startChangeset, merge.sourceChangeset, branchName)
+        .then(branchCommits => ({ merge, branchCommits }))
+        .catch(e => {
+          log.warn('plastic-api', `Failed to get commits from merged branch ${merge.sourceBranch}`, { error: e.message });
+          return { merge, branchCommits: [] };
+        });
+    });
+
+    const branchResults = await Promise.all(branchFetches);
+
+    // Add commits from branches that were merged after the store build
+    // Only include commits that weren't in the previous merge
+    // Tag each commit with the branch it came from and when it was merged
+    for (const { merge, branchCommits } of branchResults) {
+      log.info('plastic-api', `Processing merge ${merge.sourceBranch}: got ${branchCommits.length} commits from query`);
+      let addedCount = 0;
+      for (const commit of branchCommits) {
+        if (!seen.has(commit.changeset)) {
+          seen.add(commit.changeset);
+          changesets.push({
+            changeset: commit.changeset,
+            author: commit.author,
+            message: commit.message,
+            mergedFrom: merge.sourceBranch,
+            mergedAt: merge.destChangeset
+          });
+          addedCount++;
+        }
+      }
+      if (addedCount > 0) {
+        log.info('plastic-api', `Added ${addedCount} commits from branch ${merge.sourceBranch} (merged at cs:${merge.destChangeset})`);
+      } else {
+        log.warn('plastic-api', `No commits added from branch ${merge.sourceBranch} - either got 0 from query or all were duplicates`);
+      }
+    }
+
+    // Step 5: Fetch details for cherry-picked commits in parallel
+    const cherryPickFetches = cherryPicks.map(cp => {
+      const branchName = cp.sourceBranch.replace('/main/', '').replace('br:', '').replace('br:/', '');
+      log.info('plastic-api', `Fetching cherry-pick cs:${cp.sourceChangeset} from ${cp.sourceBranch}`);
+      return getChangesetRange(repository, cp.sourceChangeset - 1, cp.sourceChangeset, branchName)
+        .then(commits => ({ cherryPick: cp, commit: commits[0] || null }))
+        .catch(e => {
+          log.warn('plastic-api', `Failed to fetch cherry-pick ${cp.sourceChangeset}`, { error: e.message });
+          return { cherryPick: cp, commit: null };
+        });
+    });
+
+    const cherryPickResults = await Promise.all(cherryPickFetches);
+
+    // Add cherry-picked commits (just the single commit that was cherry-picked)
+    for (const { cherryPick, commit } of cherryPickResults) {
+      if (!seen.has(cherryPick.sourceChangeset)) {
+        seen.add(cherryPick.sourceChangeset);
+        changesets.push({
+          changeset: cherryPick.sourceChangeset,
+          author: commit?.author || '',
+          message: commit?.message || `Cherry-pick from ${cherryPick.sourceBranch}`,
+          mergedFrom: cherryPick.sourceBranch,
+          mergedAt: cherryPick.destChangeset,
+          isCherryPick: true
+        });
+        log.info('plastic-api', `Added cherry-pick cs:${cherryPick.sourceChangeset} from ${cherryPick.sourceBranch} at cs:${cherryPick.destChangeset}`);
+      }
+    }
+
+    // Sort by changeset number descending
+    changesets.sort((a, b) => b.changeset - a.changeset);
+
+    log.info('plastic-api', `Total ${changesets.length} changesets including ${merges.length} branch merges and ${cherryPicks.length} cherry-picks`);
+    return changesets;
+  } catch (error) {
+    log.error('plastic-api', `Failed to get changesets with merge history: ${repository}`, { error: error.message });
+    return [];
+  }
+}
+
 module.exports = {
   getActiveBranches,
   getLatestChangeset,
@@ -351,5 +533,9 @@ module.exports = {
   getChangesetRange,
   getMergesInRange,
   getFileDiff,
-  getChangesetList
+  getChangesetList,
+  getChangesetsWithMergeHistory,
+  // Cache utilities
+  getCacheStats,
+  clearCache
 };

@@ -536,19 +536,24 @@ async function getAndroidAppInfo(packageName) {
       const releases = track.releases || [];
       rawTracks.push(track.track);
 
-      // Look for staged rollout (inProgress with userFraction < 1) or halted rollout
+      // Look for staged rollout (inProgress with userFraction, or country-targeted) or halted rollout
       if (track.track === 'production') {
         // First check for active in-progress rollout
-        const inProgressRelease = releases.find(r => r.status === 'inProgress' && r.userFraction && r.userFraction < 1);
+        // Note: userFraction can be 1.0 for country-targeted rollouts (100% of Mexico)
+        const inProgressRelease = releases.find(r =>
+          r.status === 'inProgress' && (r.userFraction || r.countryTargeting)
+        );
         if (inProgressRelease) {
           rolloutRelease = {
             status: inProgressRelease.status,
             versionCodes: inProgressRelease.versionCodes?.map(v => parseInt(v)) || [],
             versionName: inProgressRelease.name,
             userFraction: inProgressRelease.userFraction,
-            releaseNotes: inProgressRelease.releaseNotes
+            releaseNotes: inProgressRelease.releaseNotes,
+            countryTargeting: inProgressRelease.countryTargeting || null
           };
-          log.info('store-api', `Found staged rollout: ${inProgressRelease.name} at ${(inProgressRelease.userFraction * 100).toFixed(0)}%`);
+          const countryInfo = inProgressRelease.countryTargeting?.countries?.join(', ') || 'Global';
+          log.info('store-api', `Found staged rollout: ${inProgressRelease.name} at ${(inProgressRelease.userFraction * 100).toFixed(0)}% (${countryInfo})`);
         } else {
           // If no in-progress, check for halted rollout
           const haltedRelease = releases.find(r => r.status === 'halted');
@@ -558,7 +563,8 @@ async function getAndroidAppInfo(packageName) {
               versionCodes: haltedRelease.versionCodes?.map(v => parseInt(v)) || [],
               versionName: haltedRelease.name,
               userFraction: haltedRelease.userFraction || 0,
-              releaseNotes: haltedRelease.releaseNotes
+              releaseNotes: haltedRelease.releaseNotes,
+              countryTargeting: haltedRelease.countryTargeting || null
             };
             log.info('store-api', `Found halted rollout: ${haltedRelease.name}`);
           }
@@ -1012,11 +1018,448 @@ async function promoteIOSBuild(bundleId, buildId, betaGroupName) {
   }
 }
 
+/**
+ * Start or update Android staged rollout on production track
+ * @param {string} packageName - Android package name
+ * @param {string} fromTrack - Source track (e.g., 'alpha')
+ * @param {number} userFraction - Rollout percentage as decimal (0.0 to 1.0)
+ * @param {object} releaseNotes - Optional release notes by language
+ * @param {string} countryCode - Optional country code for geo-targeting (e.g., 'MX' for Mexico)
+ */
+async function startAndroidRollout(packageName, fromTrack, userFraction, releaseNotes = null, countryCode = null) {
+  log.info('store-api', `Starting Android rollout: ${packageName} from ${fromTrack} at ${(userFraction * 100).toFixed(0)}%${countryCode ? ` (${countryCode})` : ''}`);
+
+  const delay = checkRateLimit('google');
+  if (delay === -1) {
+    throw new Error('Google Play daily rate limit exceeded');
+  }
+  if (delay > 0) {
+    await sleep(delay);
+  }
+
+  try {
+    const play = await getPlayClient();
+
+    recordRequest('google');
+    recordRequest('google');
+    recordRequest('google');
+    recordRequest('google');
+
+    const editResponse = await play.edits.insert({ packageName });
+    const editId = editResponse.data.id;
+
+    try {
+      // Get the source track to find version codes
+      const sourceTrack = await play.edits.tracks.get({
+        packageName,
+        editId,
+        track: fromTrack
+      });
+
+      const releases = sourceTrack.data.releases || [];
+      const latestRelease = releases.find(r => r.status === 'completed') || releases[0];
+
+      if (!latestRelease || !latestRelease.versionCodes || latestRelease.versionCodes.length === 0) {
+        throw new Error(`No version found on ${fromTrack} track`);
+      }
+
+      const versionCodes = latestRelease.versionCodes;
+      const versionName = latestRelease.name;
+
+      log.info('store-api', `Found version ${versionName} (${versionCodes.join(', ')}) on ${fromTrack}`);
+
+      // Build the release object for production with staged rollout
+      const newRelease = {
+        versionCodes,
+        name: versionName,
+        status: 'inProgress',
+        userFraction: userFraction
+      };
+
+      // Add country targeting if specified (Mexico = MX)
+      if (countryCode) {
+        newRelease.countryTargeting = {
+          countries: [countryCode],
+          includeRestOfWorld: false
+        };
+      }
+
+      // Add release notes if provided
+      if (releaseNotes) {
+        const MAX_NOTES_LENGTH = 500;
+        newRelease.releaseNotes = Object.entries(releaseNotes).map(([lang, text]) => {
+          let truncatedText = text;
+          if (text && text.length > MAX_NOTES_LENGTH) {
+            truncatedText = text.substring(0, MAX_NOTES_LENGTH - 3);
+            const lastSpace = truncatedText.lastIndexOf(' ');
+            if (lastSpace > MAX_NOTES_LENGTH - 50) {
+              truncatedText = truncatedText.substring(0, lastSpace);
+            }
+            truncatedText += '...';
+          }
+          return { language: lang, text: truncatedText };
+        });
+      }
+
+      // Update production track with staged rollout
+      await play.edits.tracks.update({
+        packageName,
+        editId,
+        track: 'production',
+        requestBody: {
+          track: 'production',
+          releases: [newRelease]
+        }
+      });
+
+      await play.edits.commit({ packageName, editId });
+
+      log.info('store-api', `Successfully started rollout for ${versionName} at ${(userFraction * 100).toFixed(0)}%`);
+
+      storeCache.android.delete(packageName);
+
+      return {
+        success: true,
+        packageName,
+        fromTrack,
+        toTrack: 'production',
+        versionCodes,
+        versionName,
+        userFraction,
+        countryCode
+      };
+    } catch (error) {
+      try {
+        await play.edits.delete({ packageName, editId });
+      } catch (e) {
+        // Ignore delete errors
+      }
+      throw error;
+    }
+  } catch (error) {
+    log.error('store-api', `Failed to start Android rollout: ${packageName}`, { error: error.message });
+    throw error;
+  }
+}
+
+/**
+ * Update Android staged rollout percentage
+ * @param {string} packageName - Android package name
+ * @param {number} userFraction - New rollout percentage as decimal (0.0 to 1.0), use 1.0 for 100%
+ */
+async function updateAndroidRollout(packageName, userFraction) {
+  log.info('store-api', `Updating Android rollout: ${packageName} to ${(userFraction * 100).toFixed(0)}%`);
+
+  const delay = checkRateLimit('google');
+  if (delay === -1) {
+    throw new Error('Google Play daily rate limit exceeded');
+  }
+  if (delay > 0) {
+    await sleep(delay);
+  }
+
+  try {
+    const play = await getPlayClient();
+
+    recordRequest('google');
+    recordRequest('google');
+    recordRequest('google');
+    recordRequest('google');
+
+    const editResponse = await play.edits.insert({ packageName });
+    const editId = editResponse.data.id;
+
+    try {
+      // Get current production track
+      const prodTrack = await play.edits.tracks.get({
+        packageName,
+        editId,
+        track: 'production'
+      });
+
+      const releases = prodTrack.data.releases || [];
+      // Find the in-progress or halted rollout
+      const rolloutRelease = releases.find(r => r.status === 'inProgress' || r.status === 'halted');
+
+      if (!rolloutRelease) {
+        throw new Error('No active rollout found on production track');
+      }
+
+      const versionCodes = rolloutRelease.versionCodes;
+      const versionName = rolloutRelease.name;
+
+      log.info('store-api', `Found rollout version ${versionName}, updating to ${(userFraction * 100).toFixed(0)}%`);
+
+      // Build updated release - if 100%, mark as completed (full rollout)
+      const updatedRelease = {
+        versionCodes,
+        name: versionName,
+        releaseNotes: rolloutRelease.releaseNotes
+      };
+
+      if (userFraction >= 1.0) {
+        // Full rollout - mark as completed
+        updatedRelease.status = 'completed';
+        // Remove country targeting for full release
+        log.info('store-api', `Completing rollout for ${versionName} to 100%`);
+      } else {
+        // Partial rollout - keep inProgress status
+        updatedRelease.status = 'inProgress';
+        updatedRelease.userFraction = userFraction;
+        // Preserve country targeting if present
+        if (rolloutRelease.countryTargeting) {
+          updatedRelease.countryTargeting = rolloutRelease.countryTargeting;
+        }
+      }
+
+      await play.edits.tracks.update({
+        packageName,
+        editId,
+        track: 'production',
+        requestBody: {
+          track: 'production',
+          releases: [updatedRelease]
+        }
+      });
+
+      await play.edits.commit({ packageName, editId });
+
+      log.info('store-api', `Successfully updated rollout for ${versionName} to ${(userFraction * 100).toFixed(0)}%`);
+
+      storeCache.android.delete(packageName);
+
+      return {
+        success: true,
+        packageName,
+        versionCodes,
+        versionName,
+        userFraction,
+        status: userFraction >= 1.0 ? 'completed' : 'inProgress'
+      };
+    } catch (error) {
+      try {
+        await play.edits.delete({ packageName, editId });
+      } catch (e) {
+        // Ignore delete errors
+      }
+      throw error;
+    }
+  } catch (error) {
+    log.error('store-api', `Failed to update Android rollout: ${packageName}`, { error: error.message });
+    throw error;
+  }
+}
+
+/**
+ * Halt Android staged rollout
+ * @param {string} packageName - Android package name
+ */
+async function haltAndroidRollout(packageName) {
+  log.info('store-api', `Halting Android rollout: ${packageName}`);
+
+  const delay = checkRateLimit('google');
+  if (delay === -1) {
+    throw new Error('Google Play daily rate limit exceeded');
+  }
+  if (delay > 0) {
+    await sleep(delay);
+  }
+
+  try {
+    const play = await getPlayClient();
+
+    recordRequest('google');
+    recordRequest('google');
+    recordRequest('google');
+    recordRequest('google');
+
+    const editResponse = await play.edits.insert({ packageName });
+    const editId = editResponse.data.id;
+
+    try {
+      const prodTrack = await play.edits.tracks.get({
+        packageName,
+        editId,
+        track: 'production'
+      });
+
+      const releases = prodTrack.data.releases || [];
+      const rolloutRelease = releases.find(r => r.status === 'inProgress');
+
+      if (!rolloutRelease) {
+        throw new Error('No active rollout found to halt');
+      }
+
+      const versionCodes = rolloutRelease.versionCodes;
+      const versionName = rolloutRelease.name;
+
+      // Halt the rollout
+      const haltedRelease = {
+        versionCodes,
+        name: versionName,
+        status: 'halted',
+        userFraction: rolloutRelease.userFraction,
+        releaseNotes: rolloutRelease.releaseNotes
+      };
+
+      if (rolloutRelease.countryTargeting) {
+        haltedRelease.countryTargeting = rolloutRelease.countryTargeting;
+      }
+
+      await play.edits.tracks.update({
+        packageName,
+        editId,
+        track: 'production',
+        requestBody: {
+          track: 'production',
+          releases: [haltedRelease]
+        }
+      });
+
+      await play.edits.commit({ packageName, editId });
+
+      log.info('store-api', `Successfully halted rollout for ${versionName}`);
+
+      storeCache.android.delete(packageName);
+
+      return {
+        success: true,
+        packageName,
+        versionCodes,
+        versionName,
+        status: 'halted'
+      };
+    } catch (error) {
+      try {
+        await play.edits.delete({ packageName, editId });
+      } catch (e) {
+        // Ignore delete errors
+      }
+      throw error;
+    }
+  } catch (error) {
+    log.error('store-api', `Failed to halt Android rollout: ${packageName}`, { error: error.message });
+    throw error;
+  }
+}
+
+/**
+ * Submit iOS app version for App Store review
+ * @param {string} bundleId - iOS bundle ID
+ * @param {string} buildId - Build ID to submit
+ */
+async function submitIOSForReview(bundleId, buildId) {
+  log.info('store-api', `Submitting iOS build ${buildId} for App Store review: ${bundleId}`);
+
+  try {
+    // Get app info to find the app ID
+    const appsResponse = await ascRequest(`/v1/apps?filter[bundleId]=${bundleId}`);
+
+    if (!appsResponse.data || appsResponse.data.length === 0) {
+      throw new Error(`App not found: ${bundleId}`);
+    }
+
+    const appId = appsResponse.data[0].id;
+
+    // Get the app store version that's in PREPARE_FOR_SUBMISSION or DEVELOPER_REJECTED state
+    const versionsResponse = await ascRequest(`/v1/apps/${appId}/appStoreVersions?filter[appStoreState]=PREPARE_FOR_SUBMISSION,DEVELOPER_REJECTED&limit=1`);
+
+    let appStoreVersionId;
+
+    if (versionsResponse.data && versionsResponse.data.length > 0) {
+      appStoreVersionId = versionsResponse.data[0].id;
+      log.info('store-api', `Found existing app store version: ${appStoreVersionId}`);
+    } else {
+      throw new Error('No app store version found in PREPARE_FOR_SUBMISSION state. Please create a new version in App Store Connect first.');
+    }
+
+    // Associate the build with the app store version
+    const token = generateASCToken();
+
+    // Update the build relationship
+    const buildResponse = await fetch(
+      `https://api.appstoreconnect.apple.com/v1/appStoreVersions/${appStoreVersionId}/relationships/build`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          data: { type: 'builds', id: buildId }
+        })
+      }
+    );
+
+    recordRequest('apple');
+
+    if (!buildResponse.ok) {
+      const text = await buildResponse.text();
+      throw new Error(`Failed to associate build: ${buildResponse.status} ${text}`);
+    }
+
+    log.info('store-api', `Associated build ${buildId} with app store version`);
+
+    // Submit for review
+    const submitResponse = await fetch(
+      'https://api.appstoreconnect.apple.com/v1/appStoreVersionSubmissions',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          data: {
+            type: 'appStoreVersionSubmissions',
+            relationships: {
+              appStoreVersion: {
+                data: { type: 'appStoreVersions', id: appStoreVersionId }
+              }
+            }
+          }
+        })
+      }
+    );
+
+    recordRequest('apple');
+
+    if (!submitResponse.ok) {
+      const text = await submitResponse.text();
+      // Check for common errors
+      if (submitResponse.status === 409) {
+        log.info('store-api', `Version already submitted for review`);
+      } else {
+        throw new Error(`Failed to submit for review: ${submitResponse.status} ${text}`);
+      }
+    } else {
+      log.info('store-api', `Successfully submitted build ${buildId} for App Store review`);
+    }
+
+    storeCache.ios.delete(bundleId);
+
+    return {
+      success: true,
+      bundleId,
+      buildId,
+      appStoreVersionId,
+      status: 'submitted'
+    };
+  } catch (error) {
+    log.error('store-api', `Failed to submit iOS for review: ${bundleId}`, { error: error.message });
+    throw error;
+  }
+}
+
 module.exports = {
   getIOSAppInfo,
   getAndroidAppInfo,
   getAllStoreVersions,
   matchVersionsToChangesets,
   promoteAndroidBuild,
-  promoteIOSBuild
+  promoteIOSBuild,
+  startAndroidRollout,
+  updateAndroidRollout,
+  haltAndroidRollout,
+  submitIOSForReview
 };

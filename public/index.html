@@ -9,6 +9,25 @@
 <body>
   <div id="toast" class="toast"></div>
 
+  <!-- Error Details Modal -->
+  <div id="errorModal" class="modal">
+    <div class="modal-content error-modal-content">
+      <div class="modal-header">
+        <h2 id="errorModalTitle">Error</h2>
+        <button class="modal-close" onclick="closeErrorModal()">&times;</button>
+      </div>
+      <div class="error-modal-body">
+        <div class="error-message" id="errorModalMessage"></div>
+        <div class="error-details" id="errorModalDetails"></div>
+        <div class="error-suggestion" id="errorModalSuggestion"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="copyErrorDetails()">Copy Details</button>
+        <button class="btn btn-primary" onclick="closeErrorModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Release Notes Modal -->
   <div id="releaseNotesModal" class="modal">
     <div class="modal-content">
@@ -38,6 +57,7 @@
           <div id="releaseNotesChangesTab" class="tab-content active">
             <div class="changes-list" id="releaseNotesChangesList"></div>
             <div class="modal-actions">
+              <button id="refreshChangesBtn" onclick="refreshChangesFromPlastic()" class="btn-secondary" title="Fetch fresh data from Plastic SCM">🔄 Refresh</button>
               <button id="generateNotesBtn" onclick="generateNotesFromChanges()" class="btn-secondary">Generate Release Notes</button>
               <button onclick="switchReleaseNotesTab('notes')" class="btn-primary">Write Notes Manually</button>
             </div>
@@ -52,6 +72,7 @@
             <div class="modal-actions">
               <span id="releaseNotesSaveStatus" class="save-status"></span>
               <button id="retranslateBtn" onclick="retranslateNotes()" class="btn-secondary">Re-translate All</button>
+              <button id="copyDiscordBtn" onclick="copyForDiscord()" class="btn-secondary">Copy for Discord</button>
               <button id="distributeBtn" onclick="confirmDistribute()" class="btn-primary">Distribute</button>
             </div>
           </div>
@@ -199,6 +220,70 @@
         <div class="modal-actions">
           <button onclick="closeJenkinsLoginModal()" class="btn-secondary">Cancel</button>
           <button id="jenkinsLoginBtn" onclick="submitJenkinsLogin()" class="btn-primary">Login & Promote</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rollout Details Modal -->
+  <div id="rolloutDetailsModal" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2>Rollout Details</h2>
+        <span id="rolloutVersionBadge" class="version-badge"></span>
+        <span id="rolloutHealthBadge" class="health-badge healthy">HEALTHY</span>
+        <button class="modal-close" onclick="closeRolloutDetailsModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <!-- Loading State -->
+        <div id="rolloutDetailsLoading" class="loading-state">
+          <div class="spinner"></div>
+          <span>Loading rollout data...</span>
+        </div>
+
+        <!-- Error State -->
+        <div id="rolloutDetailsError" class="error-state" style="display: none;"></div>
+
+        <!-- Content -->
+        <div id="rolloutDetailsContent" style="display: none;">
+          <!-- Health Summary -->
+          <div id="rolloutHealthSummary" class="rollout-health-summary"></div>
+
+          <!-- Comparison Table -->
+          <div class="rollout-section">
+            <h3>Version Comparison</h3>
+            <table class="rollout-comparison-table">
+              <thead>
+                <tr>
+                  <th>Version</th>
+                  <th>Crash Rate</th>
+                  <th>ANR Rate</th>
+                  <th>Sentry Issues</th>
+                  <th>Users / Sessions</th>
+                </tr>
+              </thead>
+              <tbody id="rolloutComparisonBody"></tbody>
+            </table>
+          </div>
+
+          <!-- Hourly Chart -->
+          <div class="rollout-section">
+            <h3>Hourly Vitals</h3>
+            <div class="rollout-chart-container">
+              <canvas id="rolloutVitalsChart"></canvas>
+            </div>
+          </div>
+
+          <!-- Sentry Issues -->
+          <div class="rollout-section">
+            <h3>Sentry Issues <a id="rolloutSentryLink" href="#" target="_blank" class="section-link">View All</a></h3>
+            <div id="rolloutSentryIssues" class="rollout-issues-list"></div>
+          </div>
+
+          <!-- Data Freshness -->
+          <div class="rollout-freshness">
+            <span id="rolloutDataFreshness"></span>
+          </div>
         </div>
       </div>
     </div>

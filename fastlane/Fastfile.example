@@ -1,0 +1,65 @@
+# Example Fastfile showing dashboard integration
+# Copy relevant parts to your actual Fastfile
+
+import "./dashboard_helper.rb"
+
+platform :ios do
+  lane :release do
+    # Your build steps...
+    build_app(scheme: "MyApp")
+
+    # Upload to TestFlight
+    upload_to_testflight
+
+    # Update dashboard
+    dashboard_uploaded_to_app_store(
+      job_name: "MyApp-iOS",
+      branch: ENV['GIT_BRANCH'] || "main",
+      track: "testflight"
+    )
+  end
+
+  lane :submit_for_review do
+    deliver(submit_for_review: true)
+
+    dashboard_in_review(
+      job_name: "MyApp-iOS",
+      branch: ENV['GIT_BRANCH'] || "main",
+      store: "appStore"
+    )
+  end
+end
+
+platform :android do
+  lane :release do
+    # Your build steps...
+    gradle(task: "bundleRelease")
+
+    # Upload to Play Store
+    upload_to_play_store(
+      track: "internal",
+      aab: "app/build/outputs/bundle/release/app-release.aab"
+    )
+
+    # Update dashboard
+    dashboard_uploaded_to_play_store(
+      job_name: "MyApp-Android",
+      branch: ENV['GIT_BRANCH'] || "main",
+      track: "internal"
+    )
+  end
+
+  lane :promote_to_production do
+    upload_to_play_store(
+      track: "production",
+      track_promote_to: "production"
+    )
+
+    dashboard_live(
+      job_name: "MyApp-Android",
+      branch: ENV['GIT_BRANCH'] || "main",
+      store: "googlePlay",
+      track: "production"
+    )
+  end
+end

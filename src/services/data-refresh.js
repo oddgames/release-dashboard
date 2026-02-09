@@ -335,24 +335,62 @@ async function refreshBuilds(fullRefresh = false) {
     // Persist cache to disk (but don't broadcast yet - wait for all data)
     cache.saveCacheToDisk();
 
-    // Notify frontend about background data fetch (don't send 'refresh' yet to keep existing data visible)
-    cache.broadcastSSE('refresh-status', { status: 'Fetching store & Plastic data...' });
+    // Notify frontend about what's being fetched (for loading indicators)
+    // NOTE: Vitals and Sentry removed from main refresh - now fetched on-demand via rollout-details modal
+    cache.broadcastSSE('fetch-started', { sources: ['store', 'plastic', 'analytics'] });
 
-    // Fetch store/plastic data in parallel (these don't depend on Jenkins data)
-    const [storeData, plasticData] = await Promise.all([
-      fetchStoreData().catch(e => { log.warn('server', 'Store fetch failed', { error: e.message }); return { ios: {}, android: {} }; }),
-      fetchPlasticData().catch(e => { log.warn('server', 'Plastic fetch failed', { error: e.message }); return {}; }),
-      fetchPipelineStagesInBackground(projects, buildsByJob) // Also fetch pipeline stages in parallel
+    // START ALL FETCHES IN PARALLEL - don't wait for dependencies
+    const storePromise = fetchStoreData().catch(e => { log.warn('server', 'Store fetch failed', { error: e.message }); return { ios: {}, android: {} }; });
+    const plasticPromise = fetchPlasticData().catch(e => { log.warn('server', 'Plastic fetch failed', { error: e.message }); return {}; });
+    const pipelinePromise = fetchPipelineStagesInBackground(projects, buildsByJob);
+    // DISABLED: Vitals and Sentry now fetched on-demand via /api/rollout-details/:projectId
+    // const vitalsPromise = vitalsApi.getAllVitals().catch(e => { log.warn('server', 'Vitals API failed', { error: e.message }); return { ios: {}, android: {} }; });
+    // const sentryPromise = fetchSentryDataRaw().catch(e => { log.warn('server', 'Sentry fetch failed', { error: e.message }); return {}; });
+    const analyticsPromise = fetchAnalyticsDataRaw().catch(e => { log.warn('server', 'Analytics fetch failed', { error: e.message }); return {}; });
+
+    // Apply data as it arrives - UI updates incrementally
+    let storeApplied = false;
+
+    // Helper to apply data when ready and broadcast updates
+    const applyWhenReady = async (name, promise, applyFn, needsStore = false) => {
+      try {
+        const data = await promise;
+        if (needsStore && !storeApplied) {
+          // Wait for store if this data needs it
+          const storeData = await storePromise;
+          applyStoreData(projects, storeData);
+          storeApplied = true;
+          cache.broadcastSSE('store-updated', { timestamp: Date.now() });
+        }
+        await applyFn(data);
+        cache.broadcastSSE('data-updated', { source: name, timestamp: Date.now() });
+      } catch (e) {
+        log.warn('server', `${name} apply failed`, { error: e.message });
+      }
+    };
+
+    // Apply plastic immediately (no deps)
+    await applyWhenReady('plastic', plasticPromise, (data) => applyPlasticData(projects, data));
+
+    // Apply store data (no deps, but vitals/sentry/analytics need it)
+    await applyWhenReady('store', storePromise, (data) => {
+      applyStoreData(projects, data);
+      storeApplied = true;
+    });
+
+    // Apply analytics in parallel (needs store data which is now applied)
+    // DISABLED: Vitals and Sentry now fetched on-demand via /api/rollout-details/:projectId
+    await Promise.all([
+      // applyWhenReady('vitals', vitalsPromise, (data) => applyVitalsData(projects, data), true),
+      // applyWhenReady('sentry', sentryPromise, (data) => applySentryData(projects, data), true),
+      applyWhenReady('analytics', analyticsPromise, (data) => applyAnalyticsData(projects, data), true),
+      pipelinePromise
     ]);
 
-    // Apply all the data
-    applyPlasticData(projects, plasticData);
-    await applyStoreDataAndFetchDependents(projects, storeData);
-
     cache.saveCacheToDisk();
-    // Send single refresh event now that ALL data is complete (Jenkins + Store + Plastic)
+    // Send single refresh event now that ALL data is complete
     cache.broadcastSSE('refresh', { timestamp: Date.now() });
-    cache.broadcastSSE('refresh-status', { status: null }); // Clear status - refresh complete
+    cache.broadcastSSE('refresh-status', { status: null });
     log.info('server', `Full refresh complete in ${Date.now() - startTime}ms`);
 
   } finally {
@@ -423,7 +461,245 @@ async function fetchStoreData() {
   return { ios: iosVersions, android: androidVersions };
 }
 
-// Apply store data to projects and fetch dependent data (sentry, vitals, analytics)
+// Apply store data to projects (no dependent fetches - those happen in parallel now)
+function applyStoreData(projects, storeData) {
+  try {
+    const { ios: iosVersions, android: androidVersions } = storeData;
+
+    for (const project of projects) {
+      const mainBranch = project.branches?.find(b => b.branch === 'main');
+      if (!mainBranch || !mainBranch.tracks) continue;
+
+      const projectJobs = config.jobs.filter(j =>
+        j.displayName.toLowerCase().replace(/\s+/g, '-') === project.id
+      );
+
+      const iosJob = projectJobs.find(j => j.platform === 'ios');
+      const androidJob = projectJobs.find(j => j.platform === 'android');
+
+      // Apply iOS and Android store data (same logic as applyStoreDataAndFetchDependents)
+      applyStoreDataToProject(mainBranch, iosJob, androidJob, iosVersions, androidVersions);
+    }
+    log.info('server', 'Store data applied');
+  } catch (e) {
+    log.warn('server', 'Store data apply failed', { error: e.message });
+  }
+}
+
+// Apply vitals data to projects
+async function applyVitalsData(projects, vitalsData) {
+  if (!vitalsData || (!vitalsData.ios && !vitalsData.android)) {
+    log.debug('server', 'No vitals data to apply');
+    return;
+  }
+
+  const projectsToProcess = [];
+  for (const project of projects) {
+    const mainBranch = project.branches?.find(b => b.branch === 'main');
+    if (!mainBranch?.tracks) continue;
+
+    const projectJobs = config.jobs.filter(j =>
+      j.displayName.toLowerCase().replace(/\s+/g, '-') === project.id
+    );
+
+    const iosJob = projectJobs.find(j => j.platform === 'ios');
+    const androidJob = projectJobs.find(j => j.platform === 'android');
+
+    projectsToProcess.push({ project, mainBranch, iosJob, androidJob });
+  }
+
+  // Process all projects in parallel
+  await Promise.all(projectsToProcess.map(({ project, mainBranch, iosJob, androidJob }) =>
+    processProjectVitals(project, mainBranch, iosJob, androidJob, vitalsData)
+  ));
+
+  log.info('server', 'Vitals data applied');
+}
+
+// Apply analytics data to projects
+async function applyAnalyticsData(projects, analyticsData) {
+  if (!analyticsData || Object.keys(analyticsData).length === 0) {
+    log.debug('server', 'No analytics data to apply');
+    return;
+  }
+
+  for (const project of projects) {
+    const usersByVersion = analyticsData[project.displayName];
+    if (!usersByVersion) continue;
+
+    const mainBranch = project.branches?.find(b => b.branch === 'main');
+    if (!mainBranch?.tracks) continue;
+
+    const iosVersions = usersByVersion.ios || [];
+    const androidVersions = usersByVersion.android || [];
+
+    // Calculate total DAU
+    project.iosDau = iosVersions.reduce((sum, v) => sum + (v.activeUsers || 0), 0);
+    project.androidDau = androidVersions.reduce((sum, v) => sum + (v.activeUsers || 0), 0);
+
+    // Build lookup maps
+    const iosUserMap = {};
+    for (const entry of iosVersions) iosUserMap[entry.version] = entry.activeUsers;
+
+    const androidUserMap = {};
+    for (const entry of androidVersions) androidUserMap[entry.version] = entry.activeUsers;
+
+    // Add active users to each store track
+    for (const trackName of ['storeInternal', 'storeAlpha', 'storeRollout', 'storeRelease', 'prevRelease']) {
+      const track = mainBranch.tracks[trackName];
+      if (!track) continue;
+
+      if (track.iosVersionString && iosUserMap[track.iosVersionString]) {
+        track.iosActiveUsers = iosUserMap[track.iosVersionString];
+      }
+
+      const androidVersion = track.androidVersion;
+      if (androidVersion && androidUserMap[androidVersion]) {
+        track.androidActiveUsers = androidUserMap[androidVersion];
+      }
+    }
+  }
+
+  log.info('server', 'Analytics data applied');
+}
+
+// Helper to apply store data to a single project's tracks
+function applyStoreDataToProject(mainBranch, iosJob, androidJob, iosVersions, androidVersions) {
+  const iosStateMap = {
+    'READY_FOR_SALE': 'Live on App Store',
+    'WAITING_FOR_REVIEW': 'Waiting for Review',
+    'IN_REVIEW': 'In Review',
+    'PENDING_DEVELOPER_RELEASE': 'Pending Developer Release',
+    'PREPARE_FOR_SUBMISSION': 'Preparing for Submission',
+    'PROCESSING': 'Processing',
+    'VALID': 'Ready for TestFlight'
+  };
+
+  const androidStatusMap = {
+    'completed': 'Rolled out',
+    'inProgress': 'Rolling out',
+    'halted': 'Halted',
+    'draft': 'Draft'
+  };
+
+  // iOS store data
+  if (iosJob && iosVersions[iosJob.bundleId]) {
+    const ios = iosVersions[iosJob.bundleId];
+
+    if (ios.testflight) {
+      mainBranch.tracks.storeInternal.ios = 'success';
+      mainBranch.tracks.storeInternal.iosVersion = ios.testflight.versionString ? `${ios.testflight.versionString} (${ios.testflight.build})` : ios.testflight.build;
+      mainBranch.tracks.storeInternal.iosBuildId = ios.testflight.buildId;
+      mainBranch.tracks.storeInternal.iosVersionString = ios.testflight.versionString;
+      mainBranch.tracks.storeInternal.iosDate = ios.testflight.uploadedDate;
+      mainBranch.tracks.storeInternal.iosStatusReason = ios.testflight.processingState === 'VALID' ? 'TestFlight' : iosStateMap[ios.testflight.processingState] || ios.testflight.processingState;
+    }
+
+    if (ios.live) {
+      mainBranch.tracks.storeRelease.ios = 'success';
+      mainBranch.tracks.storeRelease.iosVersion = ios.live.build ? `${ios.live.version} (${ios.live.build})` : ios.live.version;
+      mainBranch.tracks.storeRelease.iosBuildId = ios.live.buildId;
+      mainBranch.tracks.storeRelease.iosVersionString = ios.live.version;
+      mainBranch.tracks.storeRelease.iosDate = ios.live.createdDate;
+      mainBranch.tracks.storeRelease.iosStatusReason = iosStateMap[ios.live.state] || 'App Store';
+    }
+
+    if (ios.prevLive) {
+      mainBranch.tracks.prevRelease.ios = 'success';
+      mainBranch.tracks.prevRelease.iosVersion = ios.prevLive.build ? `${ios.prevLive.version} (${ios.prevLive.build})` : ios.prevLive.version;
+      mainBranch.tracks.prevRelease.iosBuildId = ios.prevLive.buildId;
+      mainBranch.tracks.prevRelease.iosVersionString = ios.prevLive.version;
+      mainBranch.tracks.prevRelease.iosDate = ios.prevLive.createdDate;
+      mainBranch.tracks.prevRelease.iosStatusReason = 'Previous Release';
+    }
+
+    const alphaBetaGroupName = config.tracks?.find(t => t.id === 'storeAlpha')?.iosBetaGroupName || 'Alpha';
+    const alphaBetaGroup = ios.betaGroups?.[alphaBetaGroupName];
+    if (alphaBetaGroup) {
+      mainBranch.tracks.storeAlpha.ios = 'success';
+      mainBranch.tracks.storeAlpha.iosVersion = alphaBetaGroup.versionString || alphaBetaGroup.build;
+      mainBranch.tracks.storeAlpha.iosBuildId = alphaBetaGroup.buildId;
+      mainBranch.tracks.storeAlpha.iosVersionString = alphaBetaGroup.versionString;
+      mainBranch.tracks.storeAlpha.iosDate = alphaBetaGroup.uploadedDate;
+      mainBranch.tracks.storeAlpha.iosStatusReason = `TestFlight ${alphaBetaGroupName}`;
+    } else if (ios.pending) {
+      mainBranch.tracks.storeAlpha.ios = 'review';
+      mainBranch.tracks.storeAlpha.iosVersion = ios.pending.build ? `${ios.pending.version} (${ios.pending.build})` : ios.pending.version;
+      mainBranch.tracks.storeAlpha.iosBuildId = ios.pending.buildId;
+      mainBranch.tracks.storeAlpha.iosVersionString = ios.pending.version;
+      mainBranch.tracks.storeAlpha.iosStatusReason = iosStateMap[ios.pending.state] || ios.pending.state;
+    }
+
+    if (ios.rollout) {
+      const userPercent = Math.round(ios.rollout.userFraction * 100);
+      mainBranch.tracks.storeRollout.ios = ios.rollout.state === 'PAUSED' ? 'review' : 'success';
+      mainBranch.tracks.storeRollout.iosVersion = ios.rollout.build ? `${ios.rollout.version} (${ios.rollout.build})` : ios.rollout.version;
+      mainBranch.tracks.storeRollout.iosBuildId = ios.rollout.buildId;
+      mainBranch.tracks.storeRollout.iosVersionString = ios.rollout.version;
+      mainBranch.tracks.storeRollout.iosDate = ios.rollout.createdDate;
+      mainBranch.tracks.storeRollout.iosUserFraction = ios.rollout.userFraction;
+      mainBranch.tracks.storeRollout.iosStatusReason = ios.rollout.state === 'PAUSED' ? `Phased Release Paused (${userPercent}%)` : `Phased Release (${userPercent}%)`;
+    } else {
+      mainBranch.tracks.storeRollout.ios = 'none';
+      mainBranch.tracks.storeRollout.iosVersion = 'N/A';
+      mainBranch.tracks.storeRollout.iosStatusReason = 'No phased release';
+    }
+  }
+
+  // Android store data
+  if (androidJob && androidVersions[androidJob.bundleId]) {
+    const android = androidVersions[androidJob.bundleId];
+
+    if (android.internal) {
+      mainBranch.tracks.storeInternal.android = 'success';
+      mainBranch.tracks.storeInternal.androidVersion = android.internal.versionName;
+      mainBranch.tracks.storeInternal.androidVersionCode = android.internal.versionCodes?.[0];
+      mainBranch.tracks.storeInternal.androidStatusReason = 'Internal Testing';
+    }
+
+    if (android.alpha) {
+      mainBranch.tracks.storeAlpha.android = 'success';
+      mainBranch.tracks.storeAlpha.androidVersion = android.alpha.versionName;
+      mainBranch.tracks.storeAlpha.androidVersionCode = android.alpha.versionCodes?.[0];
+      mainBranch.tracks.storeAlpha.androidStatusReason = androidStatusMap[android.alpha.status] || 'Closed Testing';
+    }
+
+    if (android.rollout) {
+      const userPercent = Math.round(android.rollout.userFraction * 100);
+      const isHalted = android.rollout.status === 'halted';
+      const countries = android.rollout.countryTargeting?.countries;
+      const isMexicoOnly = countries && countries.length === 1 && countries[0] === 'MX';
+      const regionLabel = isMexicoOnly ? 'Mexico' : 'Global';
+
+      mainBranch.tracks.storeRollout.android = isHalted ? 'failure' : 'success';
+      mainBranch.tracks.storeRollout.androidVersion = android.rollout.versionName;
+      mainBranch.tracks.storeRollout.androidVersionCode = android.rollout.versionCodes?.[0];
+      mainBranch.tracks.storeRollout.androidUserFraction = android.rollout.userFraction;
+      mainBranch.tracks.storeRollout.androidCountryTargeting = countries || null;
+
+      if (isHalted) {
+        mainBranch.tracks.storeRollout.androidStatusReason = `Halted (was ${userPercent}% ${regionLabel})`;
+      } else if (isMexicoOnly) {
+        mainBranch.tracks.storeRollout.androidStatusReason = `🇲🇽 Mexico (${userPercent}%)`;
+      } else {
+        mainBranch.tracks.storeRollout.androidStatusReason = `🌍 ${userPercent}% Global`;
+      }
+    } else {
+      mainBranch.tracks.storeRollout.android = 'none';
+      mainBranch.tracks.storeRollout.androidVersion = 'N/A';
+      mainBranch.tracks.storeRollout.androidStatusReason = 'No staged rollout';
+    }
+
+    if (android.production) {
+      mainBranch.tracks.storeRelease.android = 'success';
+      mainBranch.tracks.storeRelease.androidVersion = android.production.versionName;
+      mainBranch.tracks.storeRelease.androidVersionCode = android.production.versionCodes?.[0];
+      mainBranch.tracks.storeRelease.androidStatusReason = androidStatusMap[android.production.status] || 'Play Store';
+    }
+  }
+}
+
+// Apply store data to projects and fetch dependent data (sentry, vitals, analytics) - LEGACY
 async function applyStoreDataAndFetchDependents(projects, storeData) {
   try {
     const { ios: iosVersions, android: androidVersions } = storeData;
@@ -571,13 +847,23 @@ async function applyStoreDataAndFetchDependents(projects, storeData) {
         if (android.rollout) {
           const userPercent = Math.round(android.rollout.userFraction * 100);
           const isHalted = android.rollout.status === 'halted';
+          const countries = android.rollout.countryTargeting?.countries;
+          const isMexicoOnly = countries && countries.length === 1 && countries[0] === 'MX';
+          const regionLabel = isMexicoOnly ? 'Mexico' : 'Global';
+
           mainBranch.tracks.storeRollout.android = isHalted ? 'failure' : 'success';
           mainBranch.tracks.storeRollout.androidVersion = android.rollout.versionName;
           mainBranch.tracks.storeRollout.androidVersionCode = android.rollout.versionCodes?.[0];
           mainBranch.tracks.storeRollout.androidUserFraction = android.rollout.userFraction;
-          mainBranch.tracks.storeRollout.androidStatusReason = isHalted
-            ? `Halted (was ${userPercent}%)`
-            : `Staged Rollout (${userPercent}%)`;
+          mainBranch.tracks.storeRollout.androidCountryTargeting = countries || null;
+
+          if (isHalted) {
+            mainBranch.tracks.storeRollout.androidStatusReason = `Halted (was ${userPercent}% ${regionLabel})`;
+          } else if (isMexicoOnly) {
+            mainBranch.tracks.storeRollout.androidStatusReason = `🇲🇽 Mexico (${userPercent}%)`;
+          } else {
+            mainBranch.tracks.storeRollout.androidStatusReason = `🌍 ${userPercent}% Global`;
+          }
         } else {
           // No active Android rollout - show N/A
           mainBranch.tracks.storeRollout.android = 'none';
@@ -689,7 +975,58 @@ async function fetchPipelineStagesInBackground(projects, buildsByJob) {
   }
 }
 
-// Fetch Sentry issue data in background without blocking
+// Fetch raw Sentry data (no project dependency)
+async function fetchSentryDataRaw() {
+  // Return raw issue data for all configured projects
+  // Version filtering will happen in applySentryData when we have store data
+  return sentryApi.getAllProjectIssueCounts(config.projects || {}, {});
+}
+
+// Apply Sentry data to projects
+function applySentryData(projects, sentryData) {
+  if (!sentryData || Object.keys(sentryData).length === 0) {
+    log.debug('server', 'No Sentry data to apply');
+    return;
+  }
+
+  for (const project of projects) {
+    const projectSentry = sentryData[project.displayName];
+    if (projectSentry) {
+      project.sentry = projectSentry;
+    }
+  }
+  log.info('server', `Sentry data applied for ${Object.keys(sentryData).length} projects`);
+}
+
+// Fetch raw analytics data (no project dependency)
+async function fetchAnalyticsDataRaw() {
+  const results = {};
+  const projectsToFetch = [];
+
+  for (const [projectName, projectConfig] of Object.entries(config.projects || {})) {
+    if (projectConfig.firebasePropertyId) {
+      projectsToFetch.push({ projectName, propertyId: projectConfig.firebasePropertyId });
+    }
+  }
+
+  if (projectsToFetch.length === 0) return results;
+
+  const fetchResults = await Promise.all(
+    projectsToFetch.map(({ projectName, propertyId }) =>
+      firebaseApi.getUsersByVersion(propertyId, null, 7)
+        .then(data => ({ projectName, data }))
+        .catch(e => { log.warn('server', `Analytics fetch failed for ${projectName}`, { error: e.message }); return { projectName, data: null }; })
+    )
+  );
+
+  for (const { projectName, data } of fetchResults) {
+    if (data) results[projectName] = data;
+  }
+
+  return results;
+}
+
+// Fetch Sentry issue data in background without blocking (legacy - kept for compatibility)
 async function fetchSentryDataInBackground(projects) {
   try {
     // Extract deployed versions from projects for Sentry filtering
@@ -762,12 +1099,12 @@ async function fetchVitalsInBackground(projects) {
       return;
     }
 
-    // Update each project's store tracks with vitals data
+    // Build list of projects to process
+    const projectsToProcess = [];
     for (const project of projects) {
       const mainBranch = project.branches?.find(b => b.branch === 'main');
       if (!mainBranch?.tracks) continue;
 
-      // Find bundle IDs for this project
       const projectJobs = config.jobs.filter(j =>
         j.displayName.toLowerCase().replace(/\s+/g, '-') === project.id
       );
@@ -775,274 +1112,13 @@ async function fetchVitalsInBackground(projects) {
       const iosJob = projectJobs.find(j => j.platform === 'ios');
       const androidJob = projectJobs.find(j => j.platform === 'android');
 
-      // iOS vitals (crash rate mapped as crashRate for frontend consistency) - per version
-      if (iosJob && vitalsData.ios[iosJob.bundleId]) {
-        const iosVitals = vitalsData.ios[iosJob.bundleId];
-        const byVersion = iosVitals.byVersion || {};
-
-        // Add vitals to each store track using its specific version
-        for (const trackName of ['storeInternal', 'storeAlpha', 'storeRollout', 'storeRelease', 'prevRelease']) {
-          const track = mainBranch.tracks[trackName];
-          if (!track) continue;
-
-          // Try to find version-specific data using iosVersionString
-          const versionString = track.iosVersionString;
-          const versionData = versionString && byVersion[versionString];
-
-          // Use version-specific data if available, otherwise fall back to aggregate
-          const vitalsObj = {
-            crashRate: versionData?.crashRate ?? iosVitals.crashRate,
-            hangRate: versionData?.hangRate ?? iosVitals.hangRate,
-            bundleId: iosJob.bundleId,
-            appId: iosVitals.appId, // For deep linking to App Store Connect
-            version: versionString || null
-          };
-
-          track.iosVitals = vitalsObj;
-        }
-
-        // Now fetch diagnostics for each build with a buildId (TestFlight builds)
-        // This provides crash counts even when perfPowerMetrics doesn't have version data
-        const buildIdsToFetch = [];
-        for (const trackName of ['storeInternal', 'storeAlpha', 'storeRollout', 'storeRelease', 'prevRelease']) {
-          const track = mainBranch.tracks[trackName];
-          if (track?.iosBuildId) {
-            buildIdsToFetch.push({ trackName, buildId: track.iosBuildId });
-          }
-        }
-
-        // Fetch diagnostics in parallel for all builds
-        if (buildIdsToFetch.length > 0) {
-          const diagnosticsResults = await Promise.all(
-            buildIdsToFetch.map(({ buildId }) =>
-              vitalsApi.getIOSBuildDiagnostics(buildId).catch(e => ({ error: e.message, buildId }))
-            )
-          );
-
-          // Apply diagnostics to tracks
-          for (let i = 0; i < buildIdsToFetch.length; i++) {
-            const { trackName, buildId } = buildIdsToFetch[i];
-            const diagnostics = diagnosticsResults[i];
-
-            if (!diagnostics.error && mainBranch.tracks[trackName]) {
-              // Add crash count from diagnostics to the vitals
-              if (!mainBranch.tracks[trackName].iosVitals) {
-                mainBranch.tracks[trackName].iosVitals = {
-                  bundleId: iosJob.bundleId,
-                  appId: iosVitals.appId
-                };
-              }
-              mainBranch.tracks[trackName].iosVitals.crashCount = diagnostics.crashCount;
-              mainBranch.tracks[trackName].iosVitals.signatureCount = diagnostics.signatureCount;
-            }
-          }
-        }
-      }
-
-      // Android vitals (crash rate + ANR rate) - per version
-      if (androidJob && vitalsData.android[androidJob.bundleId]) {
-        const androidVitals = vitalsData.android[androidJob.bundleId];
-        const byVersion = androidVitals.byVersion || {};
-        const currentReleaseCode = mainBranch.tracks.storeRelease?.androidVersionCode?.toString();
-
-        // Add vitals to each store track using its specific versionCode
-        for (const trackName of ['storeInternal', 'storeAlpha', 'storeRollout', 'storeRelease']) {
-          const track = mainBranch.tracks[trackName];
-          if (!track) continue;
-
-          const versionCode = track.androidVersionCode?.toString();
-          const versionData = versionCode && byVersion[versionCode];
-          const isVersionSpecific = !!versionData;
-
-          // Use version-specific data if available, otherwise fall back to aggregate
-          const vitalsObj = {
-            crashRate: versionData?.crashRate ?? androidVitals.crashRate ?? androidVitals.userPerceivedCrashRate,
-            userPerceivedCrashRate: versionData?.userPerceivedCrashRate ?? androidVitals.userPerceivedCrashRate,
-            anrRate: versionData?.anrRate ?? androidVitals.anrRate ?? androidVitals.userPerceivedAnrRate,
-            userPerceivedAnrRate: versionData?.userPerceivedAnrRate ?? androidVitals.userPerceivedAnrRate,
-            distinctUsers: versionData?.distinctUsers ?? null,
-            packageName: androidJob.bundleId,
-            playAppId: androidJob.playAppId,
-            developerId: config.fastlane?.googlePlay?.developerId,
-            versionCode: versionCode || null,
-            isAggregate: !isVersionSpecific // Flag to indicate fallback data
-          };
-
-          track.androidVitals = vitalsObj;
-        }
-
-        // Find prevRelease for Android: version with 2nd most users (1st is assumed to be current release)
-        // Sort all versions by user count descending
-        const sortedVersions = Object.entries(byVersion)
-          .map(([code, data]) => ({ versionCode: code, ...data }))
-          .filter(v => v.distinctUsers > 0)
-          .sort((a, b) => (b.distinctUsers || 0) - (a.distinctUsers || 0));
-
-        // Take the 2nd entry if available (skip the 1st which is the current/most popular release)
-        // If we have current release code, try to exclude it; otherwise use 2nd highest
-        let prevVersion = null;
-        if (currentReleaseCode) {
-          // Filter out current release and take the one with most users
-          const filtered = sortedVersions.filter(v => v.versionCode !== currentReleaseCode);
-          if (filtered.length > 0) prevVersion = filtered[0];
-        } else if (sortedVersions.length > 1) {
-          // No release code yet, take 2nd highest user count version
-          prevVersion = sortedVersions[1];
-        }
-
-        if (prevVersion && mainBranch.tracks.prevRelease) {
-          mainBranch.tracks.prevRelease.android = 'success';
-          mainBranch.tracks.prevRelease.androidVersion = prevVersion.versionCode;
-          mainBranch.tracks.prevRelease.androidVersionCode = parseInt(prevVersion.versionCode);
-          mainBranch.tracks.prevRelease.androidStatusReason = `${prevVersion.distinctUsers?.toLocaleString()} users`;
-
-          log.info('server', 'PrevRelease Android from current vitals', {
-            versionCode: prevVersion.versionCode,
-            distinctUsers: prevVersion.distinctUsers,
-            crashRateFromCurrentQuery: prevVersion.crashRate,
-            anrRateFromCurrentQuery: prevVersion.anrRate
-          });
-
-          // Try to get historical vitals for prevRelease
-          // Priority: 1) Firebase first-seen date for this version, 2) iOS release date as fallback
-          let historicalVitals = null;
-          let prevReleaseDate = null;
-          let dateSource = null;
-
-          // Try to get Firebase first-seen date for the prev Android version
-          // Note: prevVersion.versionCode is a Play store versionCode (e.g. "30106398")
-          // Firebase uses versionName (e.g. "1.90.4549") - we need to match by user count
-          const projectConfig = config.projects?.[project.displayName];
-          if (projectConfig?.firebasePropertyId) {
-            try {
-              // Get users by version to find 2nd most popular (prev release)
-              const usersByVersion = await firebaseApi.getUsersByVersion(
-                projectConfig.firebasePropertyId,
-                'android',
-                30 // Look back 30 days
-              );
-
-              // Find 2nd most popular version (skip current store release)
-              const currentVersionName = mainBranch.tracks.storeRelease?.androidVersion;
-              const androidVersionsList = usersByVersion?.android || [];
-              const prevVersionFromFirebase = androidVersionsList.find(v =>
-                v.version !== currentVersionName
-              ) || androidVersionsList[1];
-
-              if (prevVersionFromFirebase) {
-                // Now get the first-seen date for this version
-                const versionDates = await firebaseApi.getVersionFirstSeenDates(
-                  projectConfig.firebasePropertyId,
-                  'android',
-                  90
-                );
-
-                const firstSeenDate = versionDates?.android?.[prevVersionFromFirebase.version];
-                if (firstSeenDate) {
-                  prevReleaseDate = firstSeenDate;
-                  dateSource = 'firebase';
-                  log.info('server', 'Found Firebase release date for prev Android', {
-                    versionName: prevVersionFromFirebase.version,
-                    firstSeenDate,
-                    activeUsers: prevVersionFromFirebase.activeUsers
-                  });
-                }
-              }
-            } catch (e) {
-              log.debug('server', 'Firebase version dates fetch failed', { error: e.message });
-            }
-          }
-
-          // Fall back to iOS release date if Firebase didn't work
-          if (!prevReleaseDate && mainBranch.tracks.prevRelease.iosDate) {
-            prevReleaseDate = mainBranch.tracks.prevRelease.iosDate;
-            dateSource = 'ios';
-          }
-
-          log.info('server', 'Historical vitals date lookup', {
-            versionCode: prevVersion.versionCode,
-            prevReleaseDate,
-            dateSource,
-            iosDateAvailable: !!mainBranch.tracks.prevRelease.iosDate
-          });
-
-          if (prevReleaseDate) {
-            // Parse date - Firebase returns YYYYMMDD, iOS returns ISO string
-            const startDate = dateSource === 'firebase'
-              ? new Date(`${prevReleaseDate.slice(0,4)}-${prevReleaseDate.slice(4,6)}-${prevReleaseDate.slice(6,8)}`)
-              : new Date(prevReleaseDate);
-            const endDate = new Date(startDate.getTime() + 14 * 24 * 60 * 60 * 1000); // 2 weeks after release
-
-            try {
-              historicalVitals = await vitalsApi.getAndroidVitals(androidJob.bundleId, {
-                startDate,
-                endDate,
-                skipCache: false
-              });
-              log.info('server', `Fetched historical vitals for prevRelease Android`, {
-                versionCode: prevVersion.versionCode,
-                dateSource,
-                dateRange: `${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`
-              });
-            } catch (e) {
-              log.warn('server', 'Historical vitals fetch failed, using current data', { error: e.message });
-            }
-          }
-
-          // Use historical data if available
-          // Find the most active version in the historical period (should be the release we're looking for)
-          let historicalVersionData = null;
-          let historicalVersionCode = null;
-
-          if (historicalVitals?.byVersion) {
-            const versions = Object.entries(historicalVitals.byVersion);
-            if (versions.length > 0) {
-              // Sort by user count and take the highest (most active during release period)
-              const sorted = versions
-                .map(([code, data]) => ({ versionCode: code, ...data }))
-                .filter(v => v.distinctUsers > 0)
-                .sort((a, b) => (b.distinctUsers || 0) - (a.distinctUsers || 0));
-
-              if (sorted.length > 0) {
-                historicalVersionData = sorted[0];
-                historicalVersionCode = sorted[0].versionCode;
-              }
-            }
-          }
-
-          const vitalsSource = historicalVersionData || prevVersion;
-          const isHistorical = !!historicalVersionData;
-
-          log.info('server', 'Historical vitals lookup result', {
-            targetVersionCode: prevVersion.versionCode,
-            hasHistoricalVitals: !!historicalVitals,
-            historicalVersionsAvailable: historicalVitals ? Object.keys(historicalVitals.byVersion || {}) : [],
-            foundHistoricalData: isHistorical,
-            usedVersionCode: historicalVersionCode,
-            crashRate: vitalsSource.crashRate,
-            anrRate: vitalsSource.anrRate
-          });
-
-          mainBranch.tracks.prevRelease.androidVitals = {
-            crashRate: vitalsSource.crashRate,
-            userPerceivedCrashRate: vitalsSource.userPerceivedCrashRate,
-            anrRate: vitalsSource.anrRate,
-            userPerceivedAnrRate: vitalsSource.userPerceivedAnrRate,
-            distinctUsers: vitalsSource.distinctUsers ?? prevVersion.distinctUsers,
-            packageName: androidJob.bundleId,
-            playAppId: androidJob.playAppId,
-            developerId: config.fastlane?.googlePlay?.developerId,
-            versionCode: historicalVersionCode || prevVersion.versionCode,
-            isHistorical, // Flag indicating data is from historical query (release date + 2 weeks)
-            dateSource: isHistorical ? dateSource : null, // 'firebase' or 'ios' - where we got the release date
-            queryDateRange: isHistorical ? {
-              start: historicalVitals.queryStart,
-              end: historicalVitals.queryEnd
-            } : null
-          };
-        }
-      }
+      projectsToProcess.push({ project, mainBranch, iosJob, androidJob });
     }
+
+    // Process all projects in PARALLEL
+    await Promise.all(projectsToProcess.map(({ project, mainBranch, iosJob, androidJob }) =>
+      processProjectVitals(project, mainBranch, iosJob, androidJob, vitalsData)
+    ));
 
     log.info('server', 'Vitals data fetched and applied');
   } catch (e) {
@@ -1050,24 +1126,219 @@ async function fetchVitalsInBackground(projects) {
   }
 }
 
+// Process vitals for a single project (called in parallel)
+async function processProjectVitals(project, mainBranch, iosJob, androidJob, vitalsData) {
+  // iOS vitals
+  if (iosJob && vitalsData.ios[iosJob.bundleId]) {
+    const iosVitals = vitalsData.ios[iosJob.bundleId];
+    const byVersion = iosVitals.byVersion || {};
+
+    // Add vitals to each store track
+    for (const trackName of ['storeInternal', 'storeAlpha', 'storeRollout', 'storeRelease', 'prevRelease']) {
+      const track = mainBranch.tracks[trackName];
+      if (!track) continue;
+
+      const versionString = track.iosVersionString;
+      const versionData = versionString && byVersion[versionString];
+
+      track.iosVitals = {
+        crashRate: versionData?.crashRate ?? iosVitals.crashRate,
+        hangRate: versionData?.hangRate ?? iosVitals.hangRate,
+        bundleId: iosJob.bundleId,
+        appId: iosVitals.appId,
+        version: versionString || null
+      };
+    }
+
+    // Fetch diagnostics for builds with buildId
+    const buildIdsToFetch = [];
+    for (const trackName of ['storeInternal', 'storeAlpha', 'storeRollout', 'storeRelease', 'prevRelease']) {
+      const track = mainBranch.tracks[trackName];
+      if (track?.iosBuildId) {
+        buildIdsToFetch.push({ trackName, buildId: track.iosBuildId });
+      }
+    }
+
+    if (buildIdsToFetch.length > 0) {
+      const diagnosticsResults = await Promise.all(
+        buildIdsToFetch.map(({ buildId }) =>
+          vitalsApi.getIOSBuildDiagnostics(buildId).catch(e => ({ error: e.message, buildId }))
+        )
+      );
+
+      for (let i = 0; i < buildIdsToFetch.length; i++) {
+        const { trackName } = buildIdsToFetch[i];
+        const diagnostics = diagnosticsResults[i];
+
+        if (!diagnostics.error && mainBranch.tracks[trackName]) {
+          if (!mainBranch.tracks[trackName].iosVitals) {
+            mainBranch.tracks[trackName].iosVitals = { bundleId: iosJob.bundleId, appId: iosVitals.appId };
+          }
+          mainBranch.tracks[trackName].iosVitals.crashCount = diagnostics.crashCount;
+          mainBranch.tracks[trackName].iosVitals.signatureCount = diagnostics.signatureCount;
+        }
+      }
+    }
+  }
+
+  // Android vitals
+  if (androidJob && vitalsData.android[androidJob.bundleId]) {
+    const androidVitals = vitalsData.android[androidJob.bundleId];
+    const byVersion = androidVitals.byVersion || {};
+    const currentReleaseCode = mainBranch.tracks.storeRelease?.androidVersionCode?.toString();
+
+    // Add vitals to each store track
+    for (const trackName of ['storeInternal', 'storeAlpha', 'storeRollout', 'storeRelease']) {
+      const track = mainBranch.tracks[trackName];
+      if (!track) continue;
+
+      const versionCode = track.androidVersionCode?.toString();
+      const versionData = versionCode && byVersion[versionCode];
+      const isVersionSpecific = !!versionData;
+
+      track.androidVitals = {
+        crashRate: versionData?.crashRate ?? androidVitals.crashRate ?? androidVitals.userPerceivedCrashRate,
+        userPerceivedCrashRate: versionData?.userPerceivedCrashRate ?? androidVitals.userPerceivedCrashRate,
+        anrRate: versionData?.anrRate ?? androidVitals.anrRate ?? androidVitals.userPerceivedAnrRate,
+        userPerceivedAnrRate: versionData?.userPerceivedAnrRate ?? androidVitals.userPerceivedAnrRate,
+        distinctUsers: versionData?.distinctUsers ?? null,
+        packageName: androidJob.bundleId,
+        playAppId: androidJob.playAppId,
+        developerId: config.fastlane?.googlePlay?.developerId,
+        versionCode: versionCode || null,
+        isAggregate: !isVersionSpecific
+      };
+    }
+
+    // Find prevRelease for Android
+    const sortedVersions = Object.entries(byVersion)
+      .map(([code, data]) => ({ versionCode: code, ...data }))
+      .filter(v => v.distinctUsers > 0)
+      .sort((a, b) => (b.distinctUsers || 0) - (a.distinctUsers || 0));
+
+    let prevVersion = null;
+    if (currentReleaseCode) {
+      const filtered = sortedVersions.filter(v => v.versionCode !== currentReleaseCode);
+      if (filtered.length > 0) prevVersion = filtered[0];
+    } else if (sortedVersions.length > 1) {
+      prevVersion = sortedVersions[1];
+    }
+
+    if (prevVersion && mainBranch.tracks.prevRelease) {
+      mainBranch.tracks.prevRelease.android = 'success';
+      // Don't set androidVersion here - it will be set by analytics with the correct versionName (contains changeset)
+      // Only set androidVersionCode for vitals lookup
+      mainBranch.tracks.prevRelease.androidVersionCode = parseInt(prevVersion.versionCode);
+      mainBranch.tracks.prevRelease.androidStatusReason = `${prevVersion.distinctUsers?.toLocaleString()} users`;
+
+      // Try to get historical vitals for prevRelease
+      let historicalVitals = null;
+      let prevReleaseDate = null;
+      let dateSource = null;
+
+      const projectConfig = config.projects?.[project.displayName];
+      if (projectConfig?.firebasePropertyId) {
+        try {
+          const usersByVersion = await firebaseApi.getUsersByVersion(projectConfig.firebasePropertyId, 'android', 30);
+          const currentVersionName = mainBranch.tracks.storeRelease?.androidVersion;
+          const androidVersionsList = usersByVersion?.android || [];
+          const prevVersionFromFirebase = androidVersionsList.find(v => v.version !== currentVersionName) || androidVersionsList[1];
+
+          if (prevVersionFromFirebase) {
+            const versionDates = await firebaseApi.getVersionFirstSeenDates(projectConfig.firebasePropertyId, 'android', 90);
+            const firstSeenDate = versionDates?.android?.[prevVersionFromFirebase.version];
+            if (firstSeenDate) {
+              prevReleaseDate = firstSeenDate;
+              dateSource = 'firebase';
+            }
+          }
+        } catch (e) {
+          log.debug('server', 'Firebase version dates fetch failed', { error: e.message });
+        }
+      }
+
+      // Fall back to iOS release date
+      if (!prevReleaseDate && mainBranch.tracks.prevRelease.iosDate) {
+        prevReleaseDate = mainBranch.tracks.prevRelease.iosDate;
+        dateSource = 'ios';
+      }
+
+      if (prevReleaseDate) {
+        const startDate = dateSource === 'firebase'
+          ? new Date(`${prevReleaseDate.slice(0,4)}-${prevReleaseDate.slice(4,6)}-${prevReleaseDate.slice(6,8)}`)
+          : new Date(prevReleaseDate);
+        const endDate = new Date(startDate.getTime() + 14 * 24 * 60 * 60 * 1000);
+
+        try {
+          historicalVitals = await vitalsApi.getAndroidVitals(androidJob.bundleId, { startDate, endDate, skipCache: false });
+        } catch (e) {
+          log.debug('server', 'Historical vitals fetch failed', { error: e.message });
+        }
+      }
+
+      let historicalVersionData = null;
+      let historicalVersionCode = null;
+
+      if (historicalVitals?.byVersion) {
+        const sorted = Object.entries(historicalVitals.byVersion)
+          .map(([code, data]) => ({ versionCode: code, ...data }))
+          .filter(v => v.distinctUsers > 0)
+          .sort((a, b) => (b.distinctUsers || 0) - (a.distinctUsers || 0));
+
+        if (sorted.length > 0) {
+          historicalVersionData = sorted[0];
+          historicalVersionCode = sorted[0].versionCode;
+        }
+      }
+
+      const vitalsSource = historicalVersionData || prevVersion;
+      const isHistorical = !!historicalVersionData;
+
+      mainBranch.tracks.prevRelease.androidVitals = {
+        crashRate: vitalsSource.crashRate,
+        userPerceivedCrashRate: vitalsSource.userPerceivedCrashRate,
+        anrRate: vitalsSource.anrRate,
+        userPerceivedAnrRate: vitalsSource.userPerceivedAnrRate,
+        distinctUsers: vitalsSource.distinctUsers ?? prevVersion.distinctUsers,
+        packageName: androidJob.bundleId,
+        playAppId: androidJob.playAppId,
+        developerId: config.fastlane?.googlePlay?.developerId,
+        versionCode: historicalVersionCode || prevVersion.versionCode,
+        isHistorical,
+        dateSource: isHistorical ? dateSource : null,
+        queryDateRange: isHistorical ? { start: historicalVitals.queryStart, end: historicalVitals.queryEnd } : null
+      };
+    }
+  }
+}
+
 // Fetch analytics data (active users per version) in background
 async function fetchAnalyticsInBackground(projects) {
   try {
-    // For each project, get users by version from Firebase Analytics
+    // Build list of projects that need analytics
+    const projectsToFetch = [];
     for (const project of projects) {
       const mainBranch = project.branches?.find(b => b.branch === 'main');
       if (!mainBranch?.tracks) continue;
-
       const projectConfig = config.projects?.[project.displayName];
       if (!projectConfig?.firebasePropertyId) continue;
+      projectsToFetch.push({ project, mainBranch, projectConfig });
+    }
 
-      // Fetch users by version (7 day lookback for more stable data)
-      const usersByVersion = await firebaseApi.getUsersByVersion(
-        projectConfig.firebasePropertyId,
-        null, // Both platforms
-        7     // 7 days
-      );
+    if (projectsToFetch.length === 0) return;
 
+    // Fetch all analytics in PARALLEL
+    const analyticsResults = await Promise.all(
+      projectsToFetch.map(({ projectConfig }) =>
+        firebaseApi.getUsersByVersion(projectConfig.firebasePropertyId, null, 7)
+          .catch(e => { log.warn('server', 'Analytics fetch failed', { error: e.message }); return null; })
+      )
+    );
+
+    // Apply results to projects
+    for (let i = 0; i < projectsToFetch.length; i++) {
+      const { project, mainBranch, projectConfig } = projectsToFetch[i];
+      const usersByVersion = analyticsResults[i];
       if (!usersByVersion) continue;
 
       // Store raw analytics data sorted by users (for project-level DAU)
@@ -1128,8 +1399,8 @@ async function fetchAnalyticsInBackground(projects) {
         }
 
         // Android: Get 2nd most popular version from Firebase for user counts
-        // The vitals code sets androidVersion to versionCode, but Firebase uses versionName
-        // We need to use versionName for display (contains changeset) and store versionCode for vitals
+        // Vitals only sets androidVersionCode (for lookup), we set androidVersion here with proper versionName
+        // versionName contains the changeset (e.g., "1.90.4549") for display
         if (androidVersions.length > 1) {
           // Skip the current store release and take next most popular
           // storeRelease.androidVersion is already the versionName (e.g., "1.90.8466")
@@ -1154,6 +1425,14 @@ async function fetchAnalyticsInBackground(projects) {
               versionCodeFromVitals: prevRelease.androidVersionCode
             });
           }
+        }
+
+        // Fallback: if androidVersion still not set but we have androidVersionCode from vitals, use that
+        if (!prevRelease.androidVersion && prevRelease.androidVersionCode) {
+          prevRelease.androidVersion = prevRelease.androidVersionCode.toString();
+          log.debug('server', 'PrevRelease Android fallback to versionCode', {
+            versionCode: prevRelease.androidVersionCode
+          });
         }
       }
     }

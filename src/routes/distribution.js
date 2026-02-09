@@ -277,4 +277,190 @@ router.get('/store-versions/:platform/:bundleId', async (req, res) => {
   }
 });
 
+// Start Android staged rollout from alpha to production
+// Supports: Mexico-only, percentage-based, or full rollout
+router.post('/rollout/android/start', async (req, res) => {
+  const { projectId, rolloutType, releaseNotes, auth } = req.body;
+
+  // Validate Jenkins credentials
+  if (!auth || !auth.username || !auth.password) {
+    return res.status(401).json({ error: 'Jenkins authentication required', requiresAuth: true });
+  }
+
+  const authResult = await jenkinsApi.validateCredentials(auth.username, auth.password);
+  if (!authResult.valid) {
+    return res.status(401).json({ error: 'Invalid Jenkins credentials', requiresAuth: true });
+  }
+
+  log.info('server', 'Android rollout start request', { projectId, rolloutType, user: authResult.fullName });
+
+  try {
+    // Find Android job for this project
+    const androidJob = config.jobs.find(job =>
+      job.displayName.toLowerCase().replace(/\s+/g, '-') === projectId && job.platform === 'android'
+    );
+
+    if (!androidJob) {
+      return res.status(404).json({ error: 'Android project not found' });
+    }
+
+    // Get project config for languages
+    const projectConfig = config.projects?.[androidJob.displayName] || { languages: ['en'] };
+
+    // Auto-translate release notes if provided
+    let translatedNotes = null;
+    if (releaseNotes) {
+      if (typeof releaseNotes === 'string') {
+        log.info('server', 'Auto-translating release notes', { languages: projectConfig.languages });
+        translatedNotes = await translateReleaseNotes(releaseNotes, projectConfig.languages);
+      } else {
+        translatedNotes = releaseNotes;
+      }
+    }
+
+    // Determine rollout parameters based on type
+    let userFraction;
+    let countryCode = null;
+
+    switch (rolloutType) {
+      case 'mexico':
+        userFraction = 1.0; // 100% of Mexico
+        countryCode = 'MX';
+        break;
+      case '20%':
+        userFraction = 0.20;
+        break;
+      case '100%':
+        userFraction = 1.0;
+        break;
+      default:
+        return res.status(400).json({ error: 'Invalid rollout type. Use: mexico, 20%, or 100%' });
+    }
+
+    const result = await storeApi.startAndroidRollout(
+      androidJob.bundleId,
+      'alpha', // Source track
+      userFraction,
+      translatedNotes,
+      countryCode
+    );
+
+    log.info('server', 'Android rollout started', { projectId, rolloutType, result });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    log.error('server', 'Android rollout start failed', { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update Android staged rollout percentage
+router.post('/rollout/android/update', async (req, res) => {
+  const { projectId, percentage, auth } = req.body;
+
+  // Validate Jenkins credentials
+  if (!auth || !auth.username || !auth.password) {
+    return res.status(401).json({ error: 'Jenkins authentication required', requiresAuth: true });
+  }
+
+  const authResult = await jenkinsApi.validateCredentials(auth.username, auth.password);
+  if (!authResult.valid) {
+    return res.status(401).json({ error: 'Invalid Jenkins credentials', requiresAuth: true });
+  }
+
+  log.info('server', 'Android rollout update request', { projectId, percentage, user: authResult.fullName });
+
+  try {
+    const androidJob = config.jobs.find(job =>
+      job.displayName.toLowerCase().replace(/\s+/g, '-') === projectId && job.platform === 'android'
+    );
+
+    if (!androidJob) {
+      return res.status(404).json({ error: 'Android project not found' });
+    }
+
+    const userFraction = percentage / 100;
+    const result = await storeApi.updateAndroidRollout(androidJob.bundleId, userFraction);
+
+    log.info('server', 'Android rollout updated', { projectId, percentage, result });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    log.error('server', 'Android rollout update failed', { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Halt Android staged rollout
+router.post('/rollout/android/halt', async (req, res) => {
+  const { projectId, auth } = req.body;
+
+  // Validate Jenkins credentials
+  if (!auth || !auth.username || !auth.password) {
+    return res.status(401).json({ error: 'Jenkins authentication required', requiresAuth: true });
+  }
+
+  const authResult = await jenkinsApi.validateCredentials(auth.username, auth.password);
+  if (!authResult.valid) {
+    return res.status(401).json({ error: 'Invalid Jenkins credentials', requiresAuth: true });
+  }
+
+  log.info('server', 'Android rollout halt request', { projectId, user: authResult.fullName });
+
+  try {
+    const androidJob = config.jobs.find(job =>
+      job.displayName.toLowerCase().replace(/\s+/g, '-') === projectId && job.platform === 'android'
+    );
+
+    if (!androidJob) {
+      return res.status(404).json({ error: 'Android project not found' });
+    }
+
+    const result = await storeApi.haltAndroidRollout(androidJob.bundleId);
+
+    log.info('server', 'Android rollout halted', { projectId, result });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    log.error('server', 'Android rollout halt failed', { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Submit iOS build for App Store review
+router.post('/submit-ios-review', async (req, res) => {
+  const { projectId, buildId, auth } = req.body;
+
+  // Validate Jenkins credentials
+  if (!auth || !auth.username || !auth.password) {
+    return res.status(401).json({ error: 'Jenkins authentication required', requiresAuth: true });
+  }
+
+  const authResult = await jenkinsApi.validateCredentials(auth.username, auth.password);
+  if (!authResult.valid) {
+    return res.status(401).json({ error: 'Invalid Jenkins credentials', requiresAuth: true });
+  }
+
+  log.info('server', 'iOS App Store submission request', { projectId, buildId, user: authResult.fullName });
+
+  try {
+    const iosJob = config.jobs.find(job =>
+      job.displayName.toLowerCase().replace(/\s+/g, '-') === projectId && job.platform === 'ios'
+    );
+
+    if (!iosJob) {
+      return res.status(404).json({ error: 'iOS project not found' });
+    }
+
+    const result = await storeApi.submitIOSForReview(iosJob.bundleId, buildId);
+
+    log.info('server', 'iOS App Store submission completed', { projectId, buildId, result });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    log.error('server', 'iOS App Store submission failed', { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

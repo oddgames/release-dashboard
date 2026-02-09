@@ -71,6 +71,44 @@ header h1 {
   to { transform: rotate(360deg); }
 }
 
+/* Loading state for data cells - pulses while fetching */
+@keyframes pulse-loading {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Data-specific loading indicators - flash only what's loading */
+.loading-store .store-data,
+.loading-vitals .vitals-data,
+.loading-sentry .sentry-data,
+.loading-analytics .analytics-data,
+.loading-plastic .plastic-data {
+  animation: pulse-loading 1s ease-in-out infinite;
+}
+
+/* Header loading badges */
+.loading-badges {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 12px;
+  font-size: 0.7rem;
+}
+
+.loading-badges .badge {
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: #2a3a4e;
+  color: #4a9eff;
+  animation: pulse-loading 1s ease-in-out infinite;
+}
+
+.loading-badges .badge.done {
+  background: #1a2a1e;
+  color: #3a6;
+  animation: none;
+  opacity: 0.6;
+}
+
 #refreshBtn {
   background: #0066cc;
   color: white;
@@ -552,6 +590,97 @@ header h1 {
   opacity: 0.7;
 }
 
+.copy-discord {
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: transform 0.2s;
+  opacity: 0.6;
+}
+
+.copy-discord:hover {
+  transform: scale(1.2);
+  opacity: 1;
+}
+
+/* Rollout promotion menu */
+.rollout-menu-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.rollout-menu-trigger {
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.rollout-menu-trigger:hover {
+  background: rgba(255,255,255,0.1);
+  transform: scale(1.1);
+}
+
+.rollout-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background: #2a2a45;
+  border: 1px solid #444;
+  border-radius: 6px;
+  min-width: 140px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.rollout-menu.show {
+  display: block;
+}
+
+.rollout-menu-item {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  color: #ccc;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.rollout-menu-item:hover {
+  background: #3a3a5a;
+  color: #fff;
+}
+
+.rollout-menu-item.rollout-halt {
+  color: #f87171;
+  border-top: 1px solid #444;
+}
+
+.rollout-menu-item.rollout-halt:hover {
+  background: #4a2a2a;
+  color: #fca5a5;
+}
+
+/* iOS App Store submit trigger */
+.ios-submit-trigger {
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: all 0.2s;
+  user-select: none;
+  opacity: 0.8;
+}
+
+.ios-submit-trigger:hover {
+  background: rgba(255,255,255,0.1);
+  transform: scale(1.1);
+  opacity: 1;
+}
+
 .platform-build {
   display: flex;
   flex-direction: column;
@@ -813,6 +942,72 @@ header h1 {
 .toast.info {
   background: #1e3a5f;
   border-left: 4px solid #60a5fa;
+}
+
+/* Error Modal */
+.error-modal-content {
+  max-width: 600px;
+  width: 90%;
+}
+
+.error-modal-body {
+  padding: 20px;
+}
+
+.error-message {
+  font-size: 1.1rem;
+  color: #f87171;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  background: rgba(248, 113, 113, 0.1);
+  border-left: 3px solid #f87171;
+  border-radius: 4px;
+}
+
+.error-details {
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #aaa;
+  background: #1a1a2e;
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 16px;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error-details:empty {
+  display: none;
+}
+
+.error-suggestion {
+  padding: 12px 16px;
+  background: rgba(74, 158, 255, 0.1);
+  border-left: 3px solid #4a9eff;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  color: #ccc;
+}
+
+.error-suggestion:empty {
+  display: none;
+}
+
+.error-suggestion strong {
+  color: #4a9eff;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.error-suggestion ul {
+  margin: 8px 0 0 20px;
+  padding: 0;
+}
+
+.error-suggestion li {
+  margin-bottom: 4px;
 }
 
 /* Modal */
@@ -1223,6 +1418,23 @@ header h1 {
   color: #888;
   font-size: 0.8rem;
   flex-shrink: 0;
+}
+
+.changes-list .change-item.merged {
+  background: rgba(139, 92, 246, 0.1);
+  border-left: 3px solid #8b5cf6;
+  padding-left: 6px;
+}
+
+.changes-list .merge-badge {
+  display: inline-block;
+  background: #8b5cf6;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  margin-left: 8px;
+  vertical-align: middle;
 }
 
 .changes-list .empty-message {
@@ -2295,4 +2507,336 @@ header h1 {
   color: #888;
   font-size: 0.8rem;
   padding: 4px 8px;
+}
+
+/* ========================================
+   Rollout Details Modal Styles
+   ======================================== */
+
+.version-badge {
+  background: #333;
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  margin-left: 12px;
+}
+
+.health-badge {
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-left: 8px;
+}
+
+.health-badge.healthy {
+  background: rgba(74, 222, 128, 0.2);
+  color: #4ade80;
+}
+
+.health-badge.warning {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+}
+
+.health-badge.critical {
+  background: rgba(248, 113, 113, 0.2);
+  color: #f87171;
+}
+
+.health-badge.insufficient_data {
+  background: rgba(156, 163, 175, 0.2);
+  color: #9ca3af;
+}
+
+.rollout-health-summary {
+  background: #1e1e35;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.rollout-health-summary .recommendation {
+  font-size: 1.1rem;
+  font-weight: 500;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rollout-health-summary .recommendation.healthy::before {
+  content: "\2713";
+  color: #4ade80;
+}
+
+.rollout-health-summary .recommendation.warning::before {
+  content: "\26A0";
+  color: #fbbf24;
+}
+
+.rollout-health-summary .recommendation.critical::before {
+  content: "\2717";
+  color: #f87171;
+}
+
+.rollout-health-summary .scores {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 12px;
+}
+
+.rollout-health-summary .score-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rollout-health-summary .score-label {
+  color: #888;
+  font-size: 0.9rem;
+}
+
+.rollout-health-summary .score-value {
+  font-weight: 600;
+}
+
+.rollout-health-summary .score-value.healthy {
+  color: #4ade80;
+}
+
+.rollout-health-summary .score-value.warning {
+  color: #fbbf24;
+}
+
+.rollout-health-summary .score-value.critical {
+  color: #f87171;
+}
+
+.rollout-health-summary .reasons {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.9rem;
+  color: #aaa;
+}
+
+.rollout-health-summary .reasons li {
+  padding: 4px 0;
+  padding-left: 16px;
+  position: relative;
+}
+
+.rollout-health-summary .reasons li::before {
+  content: "\2022";
+  position: absolute;
+  left: 0;
+  color: #666;
+}
+
+.rollout-section {
+  margin-bottom: 24px;
+}
+
+.rollout-section h3 {
+  font-size: 1rem;
+  font-weight: 500;
+  margin-bottom: 12px;
+  color: #ccc;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.section-link {
+  font-size: 0.85rem;
+  color: #60a5fa;
+  text-decoration: none;
+  font-weight: normal;
+}
+
+.section-link:hover {
+  text-decoration: underline;
+}
+
+.rollout-comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.rollout-comparison-table th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid #333;
+  color: #888;
+  font-weight: 500;
+}
+
+.rollout-comparison-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #252540;
+}
+
+.rollout-comparison-table tr:first-child td {
+  background: rgba(96, 165, 250, 0.1);
+  font-weight: 500;
+}
+
+.rollout-comparison-table .current-marker {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: #60a5fa;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.rollout-comparison-table .rate-good {
+  color: #4ade80;
+}
+
+.rollout-comparison-table .rate-warning {
+  color: #fbbf24;
+}
+
+.rollout-comparison-table .rate-bad {
+  color: #f87171;
+}
+
+.rollout-comparison-table .rate-neutral {
+  color: #666;
+}
+
+.rollout-comparison-table .version-full {
+  display: block;
+  font-weight: 500;
+}
+
+.rollout-comparison-table .version-age {
+  display: block;
+  font-size: 0.75rem;
+  color: #666;
+  margin-top: 2px;
+}
+
+.rollout-comparison-table .current-version-row .version-age {
+  color: #60a5fa;
+}
+
+.rollout-chart-container {
+  background: #1e1e35;
+  border-radius: 8px;
+  padding: 16px;
+  height: 250px;
+}
+
+.rollout-issues-list {
+  background: #1e1e35;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.rollout-issue-item {
+  display: flex;
+  align-items: flex-start;
+  padding: 10px 0;
+  border-bottom: 1px solid #252540;
+  gap: 10px;
+}
+
+.rollout-issue-item:last-child {
+  border-bottom: none;
+}
+
+.rollout-issue-level {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+.rollout-issue-level.fatal,
+.rollout-issue-level.error {
+  background: rgba(248, 113, 113, 0.2);
+  color: #f87171;
+}
+
+.rollout-issue-level.warning {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+}
+
+.rollout-issue-title {
+  flex: 1;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.rollout-issue-title a {
+  color: #e0e0e0;
+  text-decoration: none;
+}
+
+.rollout-issue-title a:hover {
+  color: #60a5fa;
+}
+
+.rollout-issue-users {
+  flex-shrink: 0;
+  color: #888;
+  font-size: 0.85rem;
+  text-align: right;
+}
+
+.rollout-freshness {
+  text-align: center;
+  color: #666;
+  font-size: 0.8rem;
+  padding-top: 12px;
+  border-top: 1px solid #252540;
+}
+
+.rollout-details-btn {
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+  margin-left: 4px;
+}
+
+.rollout-details-btn:hover {
+  opacity: 1;
+}
+
+.rollout-no-issues {
+  color: #666;
+  font-style: italic;
+  padding: 8px 0;
+}
+
+/* Rollout modal - user/session display */
+.rollout-comparison-table .user-count {
+  display: block;
+}
+
+.rollout-comparison-table .session-count {
+  display: block;
+  font-size: 0.75rem;
+  color: #666;
+  margin-top: 2px;
+}
+
+/* Firebase metrics in rollout modal */
+.rollout-comparison-table .firebase-users {
+  color: #60a5fa;
+}
+
+.rollout-comparison-table .vitals-users {
+  color: #888;
 }

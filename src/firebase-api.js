@@ -860,6 +860,221 @@ async function getAllProjectVersionDAU() {
 }
 
 /**
+ * Get detailed metrics for a specific app version
+ * Returns activeUsers, newUsers, sessions, and sessionsPerUser
+ * @param {string} propertyId - GA4 property ID
+ * @param {string} version - App version string (e.g., "3.92.12651")
+ * @param {string} platform - Platform filter ('ios' or 'android')
+ * @param {number} days - Number of days to look back (default 7)
+ * @returns {Promise<Object>} Version metrics
+ */
+async function getVersionMetrics(propertyId, version, platform = 'android', days = 7) {
+  const cacheKey = `version-metrics:${propertyId}:${version}:${platform}:${days}`;
+  const cached = analyticsCache.get(cacheKey);
+
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.data;
+  }
+
+  const client = await initClient();
+  if (!client) {
+    return null;
+  }
+
+  try {
+    const propertyPath = propertyId.startsWith('properties/') ? propertyId : `properties/${propertyId}`;
+
+    const requestBody = {
+      dateRanges: [{
+        startDate: `${days}daysAgo`,
+        endDate: 'today'
+      }],
+      metrics: [
+        { name: 'activeUsers' },
+        { name: 'newUsers' },
+        { name: 'sessions' },
+        { name: 'sessionsPerUser' },
+        { name: 'screenPageViews' }
+      ],
+      dimensions: [
+        { name: 'appVersion' }
+      ],
+      dimensionFilter: {
+        andGroup: {
+          expressions: [
+            {
+              filter: {
+                fieldName: 'platform',
+                stringFilter: {
+                  matchType: 'EXACT',
+                  value: platform === 'ios' ? 'iOS' : 'Android'
+                }
+              }
+            },
+            {
+              filter: {
+                fieldName: 'appVersion',
+                stringFilter: {
+                  matchType: 'EXACT',
+                  value: version
+                }
+              }
+            }
+          ]
+        }
+      }
+    };
+
+    const response = await client.properties.runReport({
+      property: propertyPath,
+      requestBody
+    });
+
+    const result = {
+      version,
+      platform,
+      activeUsers: 0,
+      newUsers: 0,
+      sessions: 0,
+      sessionsPerUser: 0,
+      screenPageViews: 0
+    };
+
+    if (response.data.rows && response.data.rows.length > 0) {
+      const row = response.data.rows[0];
+      result.activeUsers = parseInt(row.metricValues[0]?.value || '0');
+      result.newUsers = parseInt(row.metricValues[1]?.value || '0');
+      result.sessions = parseInt(row.metricValues[2]?.value || '0');
+      result.sessionsPerUser = parseFloat(row.metricValues[3]?.value || '0');
+      result.screenPageViews = parseInt(row.metricValues[4]?.value || '0');
+    }
+
+    log.debug('firebase-api', `Version metrics for ${version}`, result);
+
+    analyticsCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    return result;
+  } catch (error) {
+    log.error('firebase-api', 'Failed to fetch version metrics', {
+      propertyId,
+      version,
+      error: error.message
+    });
+    return null;
+  }
+}
+
+/**
+ * Get daily metrics for a specific version (day-by-day breakdown)
+ * Useful for seeing user adoption over time
+ * @param {string} propertyId - GA4 property ID
+ * @param {string} version - App version string
+ * @param {string} platform - Platform filter
+ * @param {number} days - Number of days to look back
+ * @returns {Promise<Object>} Daily metrics array
+ */
+async function getVersionDailyMetrics(propertyId, version, platform = 'android', days = 14) {
+  const cacheKey = `version-daily:${propertyId}:${version}:${platform}:${days}`;
+  const cached = analyticsCache.get(cacheKey);
+
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.data;
+  }
+
+  const client = await initClient();
+  if (!client) {
+    return null;
+  }
+
+  try {
+    const propertyPath = propertyId.startsWith('properties/') ? propertyId : `properties/${propertyId}`;
+
+    const requestBody = {
+      dateRanges: [{
+        startDate: `${days}daysAgo`,
+        endDate: 'today'
+      }],
+      metrics: [
+        { name: 'activeUsers' },
+        { name: 'sessions' }
+      ],
+      dimensions: [
+        { name: 'date' },
+        { name: 'appVersion' }
+      ],
+      dimensionFilter: {
+        andGroup: {
+          expressions: [
+            {
+              filter: {
+                fieldName: 'platform',
+                stringFilter: {
+                  matchType: 'EXACT',
+                  value: platform === 'ios' ? 'iOS' : 'Android'
+                }
+              }
+            },
+            {
+              filter: {
+                fieldName: 'appVersion',
+                stringFilter: {
+                  matchType: 'EXACT',
+                  value: version
+                }
+              }
+            }
+          ]
+        }
+      },
+      orderBys: [{
+        dimension: { dimensionName: 'date' },
+        desc: false
+      }]
+    };
+
+    const response = await client.properties.runReport({
+      property: propertyPath,
+      requestBody
+    });
+
+    const dailyData = [];
+
+    if (response.data.rows) {
+      for (const row of response.data.rows) {
+        const dateStr = row.dimensionValues[0]?.value || '';
+        // Convert YYYYMMDD to ISO date
+        const date = dateStr.length === 8
+          ? `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`
+          : dateStr;
+
+        dailyData.push({
+          date,
+          activeUsers: parseInt(row.metricValues[0]?.value || '0'),
+          sessions: parseInt(row.metricValues[1]?.value || '0')
+        });
+      }
+    }
+
+    const result = {
+      version,
+      platform,
+      daily: dailyData,
+      totalUsers: dailyData.reduce((sum, d) => sum + d.activeUsers, 0),
+      totalSessions: dailyData.reduce((sum, d) => sum + d.sessions, 0)
+    };
+
+    analyticsCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    return result;
+  } catch (error) {
+    log.error('firebase-api', 'Failed to fetch version daily metrics', {
+      propertyId,
+      version,
+      error: error.message
+    });
+    return null;
+  }
+}
+
+/**
  * Clear the analytics cache
  */
 function clearCache() {
@@ -879,5 +1094,7 @@ module.exports = {
   getAllProjectRetention,
   getVersionHistoricalDAU,
   getAllProjectVersionDAU,
+  getVersionMetrics,
+  getVersionDailyMetrics,
   clearCache
 };

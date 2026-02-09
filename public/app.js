@@ -144,6 +144,133 @@ function showToast(message, type = 'info') {
   }, 3000);
 }
 
+// Error suggestions based on common error patterns
+const errorSuggestions = {
+  'does not have permission': {
+    title: 'Google Play Permission Issue',
+    suggestions: [
+      'The service account needs "Release to production" permission in Google Play Console',
+      'Go to Google Play Console → Users and permissions → find the service account',
+      'Grant "Release to production, exclude devices, and use Play App Signing" permission',
+      'Changes may take a few minutes to propagate'
+    ]
+  },
+  'rate limit': {
+    title: 'API Rate Limit Exceeded',
+    suggestions: [
+      'Too many requests to the store API',
+      'Wait a few minutes before trying again',
+      'Daily rate limits reset at midnight UTC'
+    ]
+  },
+  'No version found': {
+    title: 'Missing Version on Track',
+    suggestions: [
+      'No build found on the source track to promote',
+      'Ensure a build has been uploaded and processed on the source track',
+      'Check App Store Connect / Google Play Console for build status'
+    ]
+  },
+  'PREPARE_FOR_SUBMISSION': {
+    title: 'App Store Version Not Ready',
+    suggestions: [
+      'Create a new app version in App Store Connect first',
+      'The version must be in "Prepare for Submission" state',
+      'Fill in all required metadata before submitting'
+    ]
+  },
+  'Invalid Jenkins credentials': {
+    title: 'Authentication Failed',
+    suggestions: [
+      'Check your Jenkins username and API token',
+      'Ensure your API token has not expired',
+      'Verify you have access to the required Jenkins jobs'
+    ]
+  },
+  'timed out': {
+    title: 'Request Timeout',
+    suggestions: [
+      'The operation took too long to complete',
+      'Check network connectivity',
+      'The external service may be experiencing issues',
+      'Try again in a few moments'
+    ]
+  },
+  'Failed to fetch': {
+    title: 'Network Error',
+    suggestions: [
+      'Check your network connection',
+      'Ensure the dashboard server is running',
+      'Check if your VPN is connected (if required)'
+    ]
+  }
+};
+
+// Store current error for copy functionality
+let currentErrorDetails = null;
+
+function showError(title, message, details = null) {
+  const modal = document.getElementById('errorModal');
+  const titleEl = document.getElementById('errorModalTitle');
+  const messageEl = document.getElementById('errorModalMessage');
+  const detailsEl = document.getElementById('errorModalDetails');
+  const suggestionEl = document.getElementById('errorModalSuggestion');
+
+  titleEl.textContent = title;
+  messageEl.textContent = message;
+  detailsEl.textContent = details || '';
+
+  // Find matching suggestion
+  let suggestion = null;
+  const errorText = `${message} ${details || ''}`.toLowerCase();
+  for (const [pattern, info] of Object.entries(errorSuggestions)) {
+    if (errorText.includes(pattern.toLowerCase())) {
+      suggestion = info;
+      break;
+    }
+  }
+
+  if (suggestion) {
+    suggestionEl.innerHTML = `
+      <strong>${suggestion.title}</strong>
+      <ul>
+        ${suggestion.suggestions.map(s => `<li>${s}</li>`).join('')}
+      </ul>
+    `;
+  } else {
+    suggestionEl.innerHTML = '';
+  }
+
+  // Store for copy
+  currentErrorDetails = {
+    title,
+    message,
+    details,
+    timestamp: new Date().toISOString()
+  };
+
+  modal.classList.add('show');
+}
+
+function closeErrorModal() {
+  document.getElementById('errorModal').classList.remove('show');
+}
+
+function copyErrorDetails() {
+  if (!currentErrorDetails) return;
+
+  const text = `Error: ${currentErrorDetails.title}
+Message: ${currentErrorDetails.message}
+${currentErrorDetails.details ? `Details: ${currentErrorDetails.details}` : ''}
+Time: ${currentErrorDetails.timestamp}`;
+
+  navigator.clipboard.writeText(text).then(() => {
+    showToast('Error details copied', 'success');
+  }).catch(() => {
+    showToast('Failed to copy', 'error');
+  });
+}
+
 async function fetchBuilds() {
   try {
     const response = await fetch('/api/builds');
@@ -540,8 +667,9 @@ function renderTrackCells(tracks, currentChangeset, projectId, branchName, sentr
       const androidInSync = track.androidVersion && storeAlphaTrack.androidVersion && track.androidVersion === storeAlphaTrack.androidVersion;
       isInSync = !needsDistribute && (iosInSync || androidInSync);
 
-      // Get versions for release notes
-      storeVersion = storeAlphaTrack.iosVersion || storeAlphaTrack.androidVersion || null;
+      // Get versions for release notes - always compare against fully released store version
+      const storeReleaseTrack = tracks?.['storeRelease'] || {};
+      storeVersion = storeReleaseTrack.iosVersion || storeReleaseTrack.androidVersion || null;
       internalVersion = track.iosVersion || track.androidVersion;
     }
 
@@ -598,6 +726,33 @@ function renderTrackCells(tracks, currentChangeset, projectId, branchName, sentr
             ` : ''}
             ${needsDistribute ? `<span class="needs-distribute" title="${usePromote ? 'Promote' : 'Distribute'} ${platformsToDistribute.join(', ')} to ${distributeTrack}" ${distributeClickHandler}>⬆</span>` : ''}
             ${isInSync ? `<span class="in-sync" title="Already in Alpha">✓</span>` : ''}
+            ${trackName === 'storeAlpha' && (track.iosVersion || track.androidVersion) ? `<span class="copy-discord" title="Copy for Discord" onclick="copyLastReleaseNotesForDiscord('${projectId}', '${track.iosVersion || track.androidVersion}')">📋</span>` : ''}
+            ${trackName === 'storeAlpha' && track.androidVersion ? `
+              <div class="rollout-menu-wrapper">
+                <span class="rollout-menu-trigger" onclick="toggleRolloutMenu(event)" title="Promote to Production">🚀</span>
+                <div class="rollout-menu">
+                  <div class="rollout-menu-item" onclick="startAndroidRollout('${projectId}', 'mexico'); closeRolloutMenu(event)">🇲🇽 Mexico Only</div>
+                  <div class="rollout-menu-item" onclick="startAndroidRollout('${projectId}', '20%'); closeRolloutMenu(event)">📊 20% Global</div>
+                  <div class="rollout-menu-item" onclick="startAndroidRollout('${projectId}', '100%'); closeRolloutMenu(event)">🌍 100% Global</div>
+                </div>
+              </div>
+            ` : ''}
+            ${trackName === 'storeAlpha' && track.iosBuildId ? `
+              <span class="ios-submit-trigger" onclick="submitIOSForReview('${projectId}', '${track.iosBuildId}')" title="Submit iOS to App Store">🍎</span>
+            ` : ''}
+            ${trackName === 'storeRollout' && track.androidVersion ? `
+              <span class="rollout-details-btn" onclick="openRolloutDetailsModal('${projectId}')" title="View Rollout Health">📊</span>
+            ` : ''}
+            ${trackName === 'storeRollout' && track.androidUserFraction && track.androidUserFraction < 1 ? `
+              <div class="rollout-menu-wrapper">
+                <span class="rollout-menu-trigger" onclick="toggleRolloutMenu(event)" title="Update Rollout">📈</span>
+                <div class="rollout-menu">
+                  ${track.androidUserFraction < 0.20 ? `<div class="rollout-menu-item" onclick="updateAndroidRollout('${projectId}', 20); closeRolloutMenu(event)">📊 Expand to 20%</div>` : ''}
+                  ${track.androidUserFraction < 1.0 ? `<div class="rollout-menu-item" onclick="updateAndroidRollout('${projectId}', 100); closeRolloutMenu(event)">🌍 Complete (100%)</div>` : ''}
+                  <div class="rollout-menu-item rollout-halt" onclick="haltAndroidRollout('${projectId}'); closeRolloutMenu(event)">⏸️ Halt Rollout</div>
+                </div>
+              </div>
+            ` : ''}
           </div>
           <div class="track-row-main">
             <div class="platform-status">
@@ -605,9 +760,7 @@ function renderTrackCells(tracks, currentChangeset, projectId, branchName, sentr
               ${renderPlatformStatus('android', track.android, track.androidVersion, track.androidUrl, track.androidDate, track.androidSuccessVersion, track.androidSuccessUrl, track.androidDownloadUrl, currentChangeset, track.androidBuildStartTime, track.androidEstimatedDuration, track.androidErrorAnalysis, track.androidStatusReason, projectId, branchName, trackName, referenceStoreVersion, track.androidVitals, allCommits, track.androidStageInfo)}
             </div>
           </div>
-          <div class="track-row-vitals">
-            ${renderVitalsTable(track, sentryData, ['storeInternal', 'storeAlpha', 'storeRollout', 'storeRelease'].includes(trackName), trackName)}
-          </div>
+          <!-- Vitals removed from main table - now shown in Rollout Details modal -->
         </div>
       </td>
     `;
@@ -1138,9 +1291,18 @@ async function openReleaseNotesModal(projectId, branch, platforms, track, fromCh
     loading.style.display = 'none';
     editor.style.display = 'block';
 
-    // Update button text based on promote vs distribute mode
+    // Update button text based on mode (rollout, promote, or distribute)
     const distributeBtn = document.getElementById('distributeBtn');
-    distributeBtn.textContent = releaseNotesData.usePromote ? 'Promote' : 'Distribute';
+    const rolloutLabels = {
+      'mexico': 'Start Rollout (Mexico)',
+      '20%': 'Start Rollout (20%)',
+      '100%': 'Start Rollout (100%)'
+    };
+    if (rolloutLabels[releaseNotesData.track]) {
+      distributeBtn.textContent = rolloutLabels[releaseNotesData.track];
+    } else {
+      distributeBtn.textContent = releaseNotesData.usePromote ? 'Promote' : 'Distribute';
+    }
 
     // If we have saved notes, switch to notes tab; otherwise show changes
     if (hasSavedNotes) {
@@ -1165,13 +1327,16 @@ function renderChangesList(commits) {
     return;
   }
 
-  const html = commits.map(c => `
-    <div class="change-item">
-      <span class="change-id">${c.version || c.changeset || ''}</span>
-      <span class="change-message">${escapeHtml(c.message || '')}</span>
-      <span class="change-author">${escapeHtml(c.author || '')}</span>
-    </div>
-  `).join('');
+  const html = commits.map(c => {
+    const mergeInfo = c.mergedFrom ? `<span class="merge-badge" title="Merged from ${c.mergedFrom} at changeset ${c.mergedAt}">🔀 ${c.mergedFrom.replace('/main/', '').replace('br:', '')}</span>` : '';
+    return `
+      <div class="change-item ${c.mergedFrom ? 'merged' : ''}">
+        <span class="change-id">${c.version || c.changeset || ''}</span>
+        <span class="change-message">${escapeHtml(c.message || '')} ${mergeInfo}</span>
+        <span class="change-author">${escapeHtml(c.author || '')}</span>
+      </div>
+    `;
+  }).join('');
 
   container.innerHTML = html;
 }
@@ -1200,7 +1365,86 @@ async function generateNotesFromChanges() {
   btn.disabled = true;
   btn.textContent = 'Generating...';
 
+  // Switch to notes tab immediately and show streaming content
+  switchReleaseNotesTab('notes');
+  selectLanguage('en');
+
+  const textarea = document.getElementById('releaseNotesText');
+  textarea.value = '';
+  releaseNotesData.translations = { en: '' };
+
   try {
+    // Use streaming endpoint for real-time generation
+    const response = await fetch('/api/stream-release-notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: releaseNotesData.projectId,
+        commits: releaseNotesData.commits
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to start generation');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      // Parse SSE data lines
+      const lines = chunk.split('\n');
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.error) {
+              throw new Error(data.error);
+            }
+            if (data.chunk) {
+              fullText += data.chunk;
+              textarea.value = fullText;
+              releaseNotesData.translations.en = fullText;
+              // Auto-scroll to bottom
+              textarea.scrollTop = textarea.scrollHeight;
+            }
+            if (data.done) {
+              // Generation complete
+              await saveReleaseNotesToDisk();
+              showToast('Release notes generated', 'success');
+            }
+          } catch (e) {
+            if (e.message !== 'Unexpected end of JSON input') {
+              console.error('Parse error:', e);
+            }
+          }
+        }
+      }
+    }
+  } catch (error) {
+    showToast(`Failed to generate: ${error.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generate Release Notes';
+  }
+}
+
+function closeReleaseNotesModal() {
+  document.getElementById('releaseNotesModal').classList.remove('show');
+}
+
+async function refreshChangesFromPlastic() {
+  const btn = document.getElementById('refreshChangesBtn');
+  btn.disabled = true;
+  btn.textContent = '🔄 Refreshing...';
+
+  try {
+    // Force refresh from Plastic by using the generate endpoint (which always fetches fresh)
     const response = await fetch('/api/generate-release-notes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1212,32 +1456,23 @@ async function generateNotesFromChanges() {
       })
     });
 
-    const result = await response.json();
+    const data = await response.json();
 
-    if (!response.ok) {
-      throw new Error(result.error || 'Failed to generate release notes');
+    if (!data.success) {
+      showToast(data.error || 'Failed to fetch changes', 'error');
+      return;
     }
 
-    releaseNotesData.translations = result.releaseNotes || {};
+    // Update commit count
+    document.getElementById('releaseNotesCommitCount').textContent = `${data.commitCount} commits`;
 
-    // Switch to notes tab and show generated content
-    switchReleaseNotesTab('notes');
-    selectLanguage('en');
-
-    // Auto-save
-    await saveReleaseNotesToDisk();
-
-    showToast('Release notes generated', 'success');
+    showToast(`Refreshed: found ${data.commitCount} commits (including merges)`, 'success');
   } catch (error) {
-    showToast(`Failed to generate: ${error.message}`, 'error');
+    showToast(`Failed to refresh: ${error.message}`, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Generate Release Notes';
+    btn.textContent = '🔄 Refresh';
   }
-}
-
-function closeReleaseNotesModal() {
-  document.getElementById('releaseNotesModal').classList.remove('show');
 }
 
 function renderLanguageTabs() {
@@ -1322,6 +1557,86 @@ async function retranslateNotes() {
   }
 }
 
+async function copyForDiscord() {
+  // Get current English text
+  const englishNotes = releaseNotesData.currentLang === 'en'
+    ? document.getElementById('releaseNotesText').value
+    : releaseNotesData.translations.en;
+
+  if (!englishNotes) {
+    showToast('No release notes to copy', 'error');
+    return;
+  }
+
+  // Get version info - use full version string (e.g., "3.91.12441")
+  const fullVersion = releaseNotesData.toChangeset;
+  const projectName = releaseNotesData.projectName;
+
+  // Format for Discord
+  // Include full version and timing estimates (Apple: 4-8h, Google: 1-4h)
+  const discordText = `**${projectName} ${fullVersion}**
+
+${englishNotes}
+
+_iOS: 4-8 hours | Android: 1-4 hours_`;
+
+  try {
+    await navigator.clipboard.writeText(discordText);
+    showToast('Copied to clipboard for Discord', 'success');
+  } catch (error) {
+    // Fallback for older browsers
+    const textarea = document.createElement('textarea');
+    textarea.value = discordText;
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    showToast('Copied to clipboard for Discord', 'success');
+  }
+}
+
+// Copy last release notes for Discord (can be called from console or keyboard shortcut)
+async function copyLastReleaseNotesForDiscord(projectId, toChangeset) {
+  try {
+    // Fetch saved release notes
+    const response = await fetch(`/api/release-notes/${projectId}/${extractChangeset(toChangeset)}`);
+    const data = await response.json();
+
+    if (!data.success || !data.found) {
+      showToast('No saved release notes - opening generator...', 'info');
+      // Open release notes modal to generate notes
+      // Get storeRelease version as the "from" changeset
+      const project = buildData?.projects?.find(p => p.id === projectId);
+      const mainBranch = project?.branches?.find(b => b.branch === 'main');
+      const storeReleaseVersion = mainBranch?.tracks?.storeRelease?.iosVersion || mainBranch?.tracks?.storeRelease?.androidVersion || '0';
+      openReleaseNotesModal(projectId, 'main', ['ios', 'android'], 'alpha', storeReleaseVersion, toChangeset, true);
+      return;
+    }
+
+    const englishNotes = data.translations?.en;
+    if (!englishNotes) {
+      showToast('No English release notes found', 'error');
+      return;
+    }
+
+    // Get project name from config
+    const project = buildData?.projects?.find(p => p.id === projectId);
+    const projectName = project?.displayName || projectId;
+
+    // Format for Discord
+    const discordText = `**${projectName} ${toChangeset}**
+
+${englishNotes}
+
+_iOS: 4-8 hours | Android: 1-4 hours_`;
+
+    await navigator.clipboard.writeText(discordText);
+    showToast('Copied to clipboard for Discord', 'success');
+  } catch (error) {
+    showToast(`Failed to copy: ${error.message}`, 'error');
+  }
+}
+
 async function confirmDistribute() {
   // Save current text
   const textarea = document.getElementById('releaseNotesText');
@@ -1346,28 +1661,65 @@ async function executeDistribute() {
   btn.disabled = true;
 
   const isPromote = releaseNotesData.usePromote;
-  const actionWord = isPromote ? 'Promoting' : 'Distributing';
-  btn.textContent = `${actionWord}...`;
+  const rolloutTypes = ['mexico', '20%', '100%'];
+  const isRollout = rolloutTypes.includes(releaseNotesData.track);
 
+  // Determine button text and action word
+  const rolloutLabels = {
+    'mexico': 'Rollout (Mexico)',
+    '20%': 'Rollout (20%)',
+    '100%': 'Rollout (100%)'
+  };
+
+  let actionWord, buttonText;
+  if (isRollout) {
+    actionWord = 'Starting rollout';
+    buttonText = rolloutLabels[releaseNotesData.track];
+  } else if (isPromote) {
+    actionWord = 'Promoting';
+    buttonText = 'Promote';
+  } else {
+    actionWord = 'Distributing';
+    buttonText = 'Distribute';
+  }
+
+  btn.textContent = `${actionWord}...`;
   showToast(`${actionWord} to ${releaseNotesData.track}...`, 'info');
 
   try {
-    // Use /api/promote for promoting existing builds, /api/distribute for new builds
-    const endpoint = isPromote ? '/api/promote' : '/api/distribute';
-    const body = isPromote ? {
-      projectId: releaseNotesData.projectId,
-      platforms: releaseNotesData.platforms,
-      fromTrack: 'storeInternal',
-      toTrack: 'storeAlpha',
-      releaseNotes: releaseNotesData.translations,
-      auth: jenkinsAuth
-    } : {
-      projectId: releaseNotesData.projectId,
-      branch: releaseNotesData.branch,
-      platforms: releaseNotesData.platforms,
-      track: releaseNotesData.track,
-      releaseNotes: releaseNotesData.translations
-    };
+    let endpoint, body;
+
+    if (isRollout) {
+      // Use rollout API - send English notes only, server will translate
+      endpoint = '/api/rollout/android/start';
+      body = {
+        projectId: releaseNotesData.projectId,
+        rolloutType: releaseNotesData.track,
+        releaseNotes: releaseNotesData.translations?.en || null,
+        auth: jenkinsAuth
+      };
+    } else if (isPromote) {
+      // Use promote API
+      endpoint = '/api/promote';
+      body = {
+        projectId: releaseNotesData.projectId,
+        platforms: releaseNotesData.platforms,
+        fromTrack: 'storeInternal',
+        toTrack: 'storeAlpha',
+        releaseNotes: releaseNotesData.translations,
+        auth: jenkinsAuth
+      };
+    } else {
+      // Use distribute API
+      endpoint = '/api/distribute';
+      body = {
+        projectId: releaseNotesData.projectId,
+        branch: releaseNotesData.branch,
+        platforms: releaseNotesData.platforms,
+        track: releaseNotesData.track,
+        releaseNotes: releaseNotesData.translations
+      };
+    }
 
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -1383,12 +1735,12 @@ async function executeDistribute() {
       sessionStorage.removeItem('jenkinsAuth');
       openJenkinsLoginModal();
       btn.disabled = false;
-      btn.textContent = isPromote ? 'Promote' : 'Distribute';
+      btn.textContent = buttonText;
       return;
     }
 
     if (result.success) {
-      // Delete saved notes after successful distribution
+      // Delete saved notes after successful action
       try {
         await fetch(`/api/release-notes/${releaseNotesData.projectId}/${releaseNotesData.toChangeset}`, {
           method: 'DELETE'
@@ -1397,20 +1749,28 @@ async function executeDistribute() {
         console.warn('Failed to delete saved notes:', e);
       }
 
-      const successMsg = isPromote
-        ? `Promoted to ${releaseNotesData.track} successfully`
-        : `Distribution to ${releaseNotesData.track} triggered successfully`;
+      let successMsg;
+      if (isRollout) {
+        successMsg = `Rollout started: ${result.versionName} to ${rolloutLabels[releaseNotesData.track]}`;
+      } else if (isPromote) {
+        successMsg = `Promoted to ${releaseNotesData.track} successfully`;
+      } else {
+        successMsg = `Distribution to ${releaseNotesData.track} triggered successfully`;
+      }
       showToast(successMsg, 'success');
       closeReleaseNotesModal();
-      setTimeout(refresh, isPromote ? 2000 : 5000);
+      pendingRollout = { projectId: null, rolloutType: null, active: false };
+      setTimeout(refresh, isPromote || isRollout ? 2000 : 5000);
     } else {
-      showToast(`Failed to ${isPromote ? 'promote' : 'distribute'}: ${result.error}`, 'error');
+      const action = isRollout ? 'Rollout' : isPromote ? 'Promotion' : 'Distribution';
+      showError(`${action} Failed`, result.error || 'Unknown error occurred');
     }
   } catch (error) {
-    showToast(`Failed to ${isPromote ? 'promote' : 'distribute'}: ${error.message}`, 'error');
+    const action = isRollout ? 'Rollout' : isPromote ? 'Promotion' : 'Distribution';
+    showError(`${action} Failed`, error.message, error.stack);
   } finally {
     btn.disabled = false;
-    btn.textContent = isPromote ? 'Promote' : 'Distribute';
+    btn.textContent = buttonText;
   }
 }
 
@@ -1988,6 +2348,50 @@ async function initialLoad() {
 
 initialLoad();
 
+// Track which data sources are currently loading
+const loadingState = {
+  store: false,
+  vitals: false,
+  sentry: false,
+  analytics: false,
+  plastic: false
+};
+
+function updateLoadingUI() {
+  const dashboard = document.getElementById('dashboard');
+  if (!dashboard) return;
+
+  // Update body classes for CSS animations
+  Object.keys(loadingState).forEach(key => {
+    if (loadingState[key]) {
+      dashboard.classList.add(`loading-${key}`);
+    } else {
+      dashboard.classList.remove(`loading-${key}`);
+    }
+  });
+
+  // Update loading badges in header
+  let badges = document.getElementById('loadingBadges');
+  if (!badges) {
+    const headerActions = document.querySelector('.header-actions');
+    if (headerActions) {
+      badges = document.createElement('div');
+      badges.id = 'loadingBadges';
+      badges.className = 'loading-badges';
+      headerActions.insertBefore(badges, headerActions.firstChild);
+    }
+  }
+
+  if (badges) {
+    const active = Object.entries(loadingState).filter(([_, v]) => v).map(([k]) => k);
+    if (active.length > 0) {
+      badges.innerHTML = active.map(k => `<span class="badge">${k}</span>`).join('');
+    } else {
+      badges.innerHTML = '';
+    }
+  }
+}
+
 // Set up SSE for real-time updates from server
 function setupSSE() {
   const eventSource = new EventSource('/api/events');
@@ -1998,6 +2402,9 @@ function setupSSE() {
 
   eventSource.addEventListener('refresh', async () => {
     console.log('Data updated, refreshing...');
+    // Clear all loading states
+    Object.keys(loadingState).forEach(k => loadingState[k] = false);
+    updateLoadingUI();
     await fetchBuilds();
   });
 
@@ -2007,13 +2414,46 @@ function setupSSE() {
     if (statusEl) {
       statusEl.textContent = data.status || '';
     }
+
+    // Set loading states when refresh starts
+    if (data.status && data.status.includes('Fetching')) {
+      Object.keys(loadingState).forEach(k => loadingState[k] = true);
+      updateLoadingUI();
+    } else if (!data.status) {
+      Object.keys(loadingState).forEach(k => loadingState[k] = false);
+      updateLoadingUI();
+    }
+  });
+
+  // Handle incremental data updates
+  eventSource.addEventListener('data-updated', async (e) => {
+    const data = JSON.parse(e.data);
+    console.log(`Data updated: ${data.source}`);
+
+    // Mark this source as done loading
+    if (loadingState[data.source] !== undefined) {
+      loadingState[data.source] = false;
+      updateLoadingUI();
+    }
+
+    // Refresh UI with latest data
+    await fetchBuilds();
+  });
+
+  eventSource.addEventListener('store-updated', async () => {
+    console.log('Store data updated');
+    loadingState.store = false;
+    updateLoadingUI();
+    await fetchBuilds();
   });
 
   eventSource.onerror = (e) => {
     console.warn('SSE connection error, will reconnect...');
-    // Clear status on disconnect
+    // Clear status and loading states on disconnect
     const statusEl = document.getElementById('refreshStatus');
     if (statusEl) statusEl.textContent = '';
+    Object.keys(loadingState).forEach(k => loadingState[k] = false);
+    updateLoadingUI();
   };
 }
 
@@ -2149,3 +2589,678 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Refresh crashboard every 5 minutes
 // setInterval(fetchCrashboard, 300000);
+
+// ============================================
+// Android Rollout Functions
+// ============================================
+
+// Pending rollout action (used when auth is needed)
+let pendingRolloutAction = null;
+
+function toggleRolloutMenu(event) {
+  event.stopPropagation();
+  const wrapper = event.target.closest('.rollout-menu-wrapper');
+  const menu = wrapper.querySelector('.rollout-menu');
+  const isOpen = menu.classList.contains('show');
+
+  // Close all other menus first
+  document.querySelectorAll('.rollout-menu.show').forEach(m => m.classList.remove('show'));
+  document.querySelectorAll('.build-menu.show').forEach(m => m.classList.remove('show'));
+
+  if (!isOpen) {
+    menu.classList.add('show');
+  }
+}
+
+function closeRolloutMenu(event) {
+  event.stopPropagation();
+  document.querySelectorAll('.rollout-menu.show').forEach(m => m.classList.remove('show'));
+}
+
+// Close rollout menus when clicking outside
+document.addEventListener('click', () => {
+  document.querySelectorAll('.rollout-menu.show').forEach(m => m.classList.remove('show'));
+});
+
+// Rollout state - tracks pending rollout when using release notes modal
+let pendingRollout = {
+  projectId: null,
+  rolloutType: null,
+  active: false
+};
+
+async function startAndroidRollout(projectId, rolloutType) {
+  // Require Jenkins auth first
+  if (!jenkinsAuth) {
+    pendingRolloutAction = { type: 'startAndroidRollout', projectId, rolloutType };
+    openJenkinsLoginForRollout();
+    return;
+  }
+
+  // Store rollout info and open the full release notes modal
+  pendingRollout = { projectId, rolloutType, active: true };
+
+  // Find the project to get changeset info
+  const project = buildData.projects?.find(p => p.id === projectId);
+  const mainBranch = project?.branches?.find(b => b.branch === 'main' || b.branch === 'master');
+
+  // Get storeAlpha version as the "to" changeset, and storeRelease as "from"
+  const toVersion = mainBranch?.tracks?.storeAlpha?.androidVersion;
+  const fromVersion = mainBranch?.tracks?.storeRelease?.androidVersion;
+
+  const toChangeset = extractChangeset(toVersion) || '0';
+  const fromChangeset = extractChangeset(fromVersion) || '0';
+
+  // Open the full release notes modal with rollout mode
+  await openReleaseNotesModal(
+    projectId,
+    'main',
+    ['android'],
+    rolloutType,  // Pass rollout type as track (mexico, 20%, 100%)
+    fromChangeset,
+    toChangeset,
+    true  // usePromote flag - will show rollout button
+  );
+}
+
+async function executeStartAndroidRollout(projectId, rolloutType, releaseNotes = null) {
+  const rolloutLabels = {
+    'mexico': 'Mexico only',
+    '20%': '20% global',
+    '100%': '100% global'
+  };
+
+  showToast(`Starting Android rollout (${rolloutLabels[rolloutType]})...`, 'info');
+
+  try {
+    const response = await fetch('/api/rollout/android/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        rolloutType,
+        releaseNotes,
+        auth: jenkinsAuth
+      })
+    });
+
+    const result = await response.json();
+
+    if (result.requiresAuth) {
+      jenkinsAuth = null;
+      sessionStorage.removeItem('jenkinsAuth');
+      pendingRolloutAction = { type: 'startAndroidRollout', projectId, rolloutType };
+      openJenkinsLoginForRollout();
+      return;
+    }
+
+    if (result.success) {
+      showToast(`Android rollout started: ${result.versionName} to ${rolloutLabels[rolloutType]}`, 'success');
+      setTimeout(refresh, 3000);
+    } else {
+      throw new Error(result.error || 'Failed to start rollout');
+    }
+  } catch (error) {
+    throw error;
+  }
+}
+
+async function updateAndroidRollout(projectId, percentage) {
+  if (!jenkinsAuth) {
+    pendingRolloutAction = { type: 'updateAndroidRollout', projectId, percentage };
+    openJenkinsLoginForRollout();
+    return;
+  }
+
+  await executeUpdateAndroidRollout(projectId, percentage);
+}
+
+async function executeUpdateAndroidRollout(projectId, percentage) {
+  showToast(`Updating Android rollout to ${percentage}%...`, 'info');
+
+  try {
+    const response = await fetch('/api/rollout/android/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        percentage,
+        auth: jenkinsAuth
+      })
+    });
+
+    const result = await response.json();
+
+    if (result.requiresAuth) {
+      jenkinsAuth = null;
+      sessionStorage.removeItem('jenkinsAuth');
+      pendingRolloutAction = { type: 'updateAndroidRollout', projectId, percentage };
+      openJenkinsLoginForRollout();
+      return;
+    }
+
+    if (result.success) {
+      const statusMsg = result.status === 'completed' ? 'Rollout complete!' : `Rollout updated to ${percentage}%`;
+      showToast(statusMsg, 'success');
+      setTimeout(refresh, 3000);
+    } else {
+      showError('Rollout Update Failed', result.error || 'Unknown error occurred');
+    }
+  } catch (error) {
+    showError('Rollout Update Failed', error.message, error.stack);
+  }
+}
+
+async function haltAndroidRollout(projectId) {
+  if (!jenkinsAuth) {
+    pendingRolloutAction = { type: 'haltAndroidRollout', projectId };
+    openJenkinsLoginForRollout();
+    return;
+  }
+
+  await executeHaltAndroidRollout(projectId);
+}
+
+async function executeHaltAndroidRollout(projectId) {
+  showToast('Halting Android rollout...', 'info');
+
+  try {
+    const response = await fetch('/api/rollout/android/halt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        auth: jenkinsAuth
+      })
+    });
+
+    const result = await response.json();
+
+    if (result.requiresAuth) {
+      jenkinsAuth = null;
+      sessionStorage.removeItem('jenkinsAuth');
+      pendingRolloutAction = { type: 'haltAndroidRollout', projectId };
+      openJenkinsLoginForRollout();
+      return;
+    }
+
+    if (result.success) {
+      showToast('Android rollout halted', 'success');
+      setTimeout(refresh, 3000);
+    } else {
+      showError('Halt Rollout Failed', result.error || 'Unknown error occurred');
+    }
+  } catch (error) {
+    showError('Halt Rollout Failed', error.message, error.stack);
+  }
+}
+
+// ============================================
+// iOS App Store Submission
+// ============================================
+
+async function submitIOSForReview(projectId, buildId) {
+  if (!jenkinsAuth) {
+    pendingRolloutAction = { type: 'submitIOSForReview', projectId, buildId };
+    openJenkinsLoginForRollout();
+    return;
+  }
+
+  await executeSubmitIOSForReview(projectId, buildId);
+}
+
+async function executeSubmitIOSForReview(projectId, buildId) {
+  showToast('Submitting iOS build for App Store review...', 'info');
+
+  try {
+    const response = await fetch('/api/submit-ios-review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        buildId,
+        auth: jenkinsAuth
+      })
+    });
+
+    const result = await response.json();
+
+    if (result.requiresAuth) {
+      jenkinsAuth = null;
+      sessionStorage.removeItem('jenkinsAuth');
+      pendingRolloutAction = { type: 'submitIOSForReview', projectId, buildId };
+      openJenkinsLoginForRollout();
+      return;
+    }
+
+    if (result.success) {
+      showToast('iOS build submitted for App Store review', 'success');
+      setTimeout(refresh, 3000);
+    } else {
+      showError('iOS Submission Failed', result.error || 'Unknown error occurred');
+    }
+  } catch (error) {
+    showError('iOS Submission Failed', error.message, error.stack);
+  }
+}
+
+// ============================================
+// Jenkins Auth for Rollout Actions
+// ============================================
+
+function openJenkinsLoginForRollout() {
+  document.getElementById('jenkinsLoginModal').classList.add('show');
+  document.getElementById('jenkinsUsername').value = '';
+  document.getElementById('jenkinsPassword').value = '';
+  document.getElementById('jenkinsLoginError').style.display = 'none';
+  document.getElementById('jenkinsUsername').focus();
+
+  // Update button text based on pending action
+  const btn = document.getElementById('jenkinsLoginBtn');
+  btn.textContent = 'Login & Continue';
+}
+
+// Override the Jenkins login submit to handle rollout actions
+const originalSubmitJenkinsLogin = submitJenkinsLogin;
+submitJenkinsLogin = async function() {
+  const username = document.getElementById('jenkinsUsername').value.trim();
+  const password = document.getElementById('jenkinsPassword').value;
+  const errorEl = document.getElementById('jenkinsLoginError');
+  const btn = document.getElementById('jenkinsLoginBtn');
+
+  if (!username || !password) {
+    errorEl.textContent = 'Username and password are required';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Verifying...';
+  errorEl.style.display = 'none';
+
+  try {
+    const response = await fetch('/api/auth/jenkins', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+
+    const result = await response.json();
+
+    if (result.valid) {
+      jenkinsAuth = { username, password };
+      sessionStorage.setItem('jenkinsAuth', JSON.stringify(jenkinsAuth));
+
+      showToast(`Logged in as ${result.fullName}`, 'success');
+      closeJenkinsLoginModal();
+
+      // Check if there's a pending rollout action
+      if (pendingRolloutAction) {
+        const action = pendingRolloutAction;
+        pendingRolloutAction = null;
+
+        switch (action.type) {
+          case 'startAndroidRollout':
+            // Open full release notes modal for rollout
+            await startAndroidRollout(action.projectId, action.rolloutType);
+            break;
+          case 'updateAndroidRollout':
+            await executeUpdateAndroidRollout(action.projectId, action.percentage);
+            break;
+          case 'haltAndroidRollout':
+            await executeHaltAndroidRollout(action.projectId);
+            break;
+          case 'submitIOSForReview':
+            await executeSubmitIOSForReview(action.projectId, action.buildId);
+            break;
+          default:
+            // Fall back to distribute action
+            await executeDistribute();
+        }
+      } else {
+        // Continue with the distribute action (original behavior)
+        await executeDistribute();
+      }
+    } else {
+      errorEl.textContent = result.error || 'Invalid credentials';
+      errorEl.style.display = 'block';
+    }
+  } catch (error) {
+    errorEl.textContent = 'Failed to verify credentials: ' + error.message;
+    errorEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Login & Continue';
+  }
+};
+
+// ============================================
+// Rollout Details Modal
+// ============================================
+
+let rolloutDetailsChart = null;
+
+async function openRolloutDetailsModal(projectId) {
+  const modal = document.getElementById('rolloutDetailsModal');
+  const loading = document.getElementById('rolloutDetailsLoading');
+  const error = document.getElementById('rolloutDetailsError');
+  const content = document.getElementById('rolloutDetailsContent');
+
+  // Show modal with loading state
+  modal.classList.add('show');
+  loading.style.display = 'flex';
+  error.style.display = 'none';
+  content.style.display = 'none';
+
+  try {
+    const response = await fetch(`/api/rollout-details/${projectId}`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to fetch rollout details');
+    }
+
+    // Update header badges
+    const daysText = data.daysIntoRollout === 0 ? 'today' :
+                     data.daysIntoRollout === 1 ? '1 day' : `${data.daysIntoRollout} days`;
+    document.getElementById('rolloutVersionBadge').textContent =
+      `v${data.version} (${Math.round(data.userFraction * 100)}% - ${daysText})`;
+
+    const healthBadge = document.getElementById('rolloutHealthBadge');
+    healthBadge.textContent = data.analysis.status.toUpperCase().replace('_', ' ');
+    healthBadge.className = `health-badge ${data.analysis.status}`;
+
+    // Render health summary
+    renderRolloutHealthSummary(data.analysis);
+
+    // Render comparison table
+    renderRolloutComparison(data);
+
+    // Render chart
+    renderRolloutChart(data.current.vitals.hourly, data.baseline.vitals);
+
+    // Render Sentry issues
+    renderRolloutSentryIssues(data.current.sentry);
+
+    // Update freshness with better debug info
+    let freshness;
+    const queryInfo = data.current.vitals.queryInfo;
+    if (data.current.vitals.hourly?.length > 0) {
+      const lastPoint = data.current.vitals.hourly[data.current.vitals.hourly.length - 1];
+      freshness = `Last data: ${formatRelativeDate(lastPoint?.timestamp)} - ${data.current.vitals.hourly.length} hourly points`;
+    } else if (queryInfo?.error) {
+      freshness = `Error: ${queryInfo.error}`;
+    } else {
+      freshness = `No hourly data yet (queried versionCode: ${queryInfo?.versionCode || 'unknown'})`;
+    }
+    document.getElementById('rolloutDataFreshness').textContent =
+      `${freshness} - Google Play data has ~48h delay`;
+
+    // Show content
+    loading.style.display = 'none';
+    content.style.display = 'block';
+
+  } catch (err) {
+    loading.style.display = 'none';
+    error.style.display = 'block';
+    error.innerHTML = `<div class="error-message">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function closeRolloutDetailsModal() {
+  document.getElementById('rolloutDetailsModal').classList.remove('show');
+  if (rolloutDetailsChart) {
+    rolloutDetailsChart.destroy();
+    rolloutDetailsChart = null;
+  }
+}
+
+// Close rollout modal on escape key
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('rolloutDetailsModal').classList.contains('show')) {
+    closeRolloutDetailsModal();
+  }
+});
+
+function renderRolloutHealthSummary(analysis) {
+  const container = document.getElementById('rolloutHealthSummary');
+
+  const scoresHtml = `
+    <div class="scores">
+      <div class="score-item">
+        <span class="score-label">Vitals Score:</span>
+        <span class="score-value ${analysis.scores.vitals.status}">${analysis.scores.vitals.score}/100</span>
+      </div>
+      <div class="score-item">
+        <span class="score-label">Sentry Score:</span>
+        <span class="score-value ${analysis.scores.sentry.status}">${analysis.scores.sentry.score}/100</span>
+      </div>
+    </div>
+  `;
+
+  const reasonsHtml = analysis.reasons?.length > 0
+    ? `<ul class="reasons">${analysis.reasons.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>`
+    : '';
+
+  container.innerHTML = `
+    <div class="recommendation ${analysis.status}">${escapeHtml(analysis.recommendation)}</div>
+    ${scoresHtml}
+    ${reasonsHtml}
+  `;
+}
+
+function renderRolloutComparison(data) {
+  const tbody = document.getElementById('rolloutComparisonBody');
+
+  const formatRate = (rate, baseline) => {
+    if (rate === null || rate === undefined) return '<span class="rate-neutral">-</span>';
+    const rateClass = baseline && rate > baseline * 1.25 ? 'rate-bad' :
+                      baseline && rate > baseline * 1.1 ? 'rate-warning' : 'rate-good';
+    return `<span class="${rateClass}">${rate.toFixed(2)}%</span>`;
+  };
+
+  // Format Sentry issues: show "X issues (Y users)"
+  // Note: event counts from Sentry API are totals across all versions, not per-release
+  // User counts are more accurate for per-release impact
+  const formatSentry = (sentry) => {
+    if (!sentry || !sentry.totalCount) return '<span class="rate-neutral">-</span>';
+    const issues = sentry.totalCount || 0;
+    const users = sentry.affectedUsers || 0;
+    const critical = sentry.criticalCount || 0;
+
+    let text = `${issues} issues`;
+    if (users > 0) text += ` (${users} users)`;
+    if (critical > 0) text = `<span class="rate-warning">${text}</span>`;
+    return text;
+  };
+
+  const formatDays = (days) => {
+    if (days === 0) return 'today';
+    if (days === 1) return '1 day';
+    return `${days} days`;
+  };
+
+  // Get crash/ANR rate - prefer hourly rolling, fall back to daily
+  const getCrashRate = (vitals) => {
+    if (vitals?.rolling24h?.crashRate !== null && vitals?.rolling24h?.crashRate !== undefined) {
+      return vitals.rolling24h.crashRate;
+    }
+    if (vitals?.daily?.crashRate !== null && vitals?.daily?.crashRate !== undefined) {
+      return vitals.daily.crashRate;
+    }
+    return null;
+  };
+
+  const getAnrRate = (vitals) => {
+    if (vitals?.rolling24h?.anrRate !== null && vitals?.rolling24h?.anrRate !== undefined) {
+      return vitals.rolling24h.anrRate;
+    }
+    if (vitals?.daily?.anrRate !== null && vitals?.daily?.anrRate !== undefined) {
+      return vitals.daily.anrRate;
+    }
+    return null;
+  };
+
+  // Current version row
+  const current = data.current;
+  const currentDays = data.daysIntoRollout || 0;
+  const currentCrash = getCrashRate(current.vitals);
+  const currentAnr = getAnrRate(current.vitals);
+
+  // User count: prefer Firebase, then vitals
+  const currentUsers = data.firebase?.activeUsers ||
+                       current.vitals.rolling24h?.totalUsers ||
+                       current.vitals.daily?.users || 0;
+  const currentSessions = data.firebase?.sessions || 0;
+
+  let html = `
+    <tr class="current-version-row">
+      <td>
+        <span class="current-marker"></span>
+        <span class="version-full">${escapeHtml(data.version)}</span>
+        <span class="version-age">${formatDays(currentDays)} in rollout</span>
+      </td>
+      <td>${formatRate(currentCrash, data.baseline.vitals.crashRate)}</td>
+      <td>${formatRate(currentAnr, data.baseline.vitals.anrRate)}</td>
+      <td>${formatSentry(current.sentry)}</td>
+      <td>
+        <span class="user-count">${currentUsers.toLocaleString()}</span>
+        ${currentSessions > 0 ? `<span class="session-count">${currentSessions.toLocaleString()} sess</span>` : ''}
+      </td>
+    </tr>
+  `;
+
+  // Previous versions
+  for (const prev of data.previousReleases || []) {
+    const prevUsers = prev.firebaseUsers || prev.atSameHour?.vitals?.users || 0;
+    html += `
+      <tr>
+        <td>
+          <span class="version-full">${escapeHtml(prev.version)}</span>
+        </td>
+        <td>${formatRate(prev.atSameHour?.vitals?.crashRate, null)}</td>
+        <td>${formatRate(prev.atSameHour?.vitals?.anrRate, null)}</td>
+        <td>${formatSentry(prev.atSameHour?.sentry)}</td>
+        <td>${prevUsers.toLocaleString()}</td>
+      </tr>
+    `;
+  }
+
+  tbody.innerHTML = html;
+}
+
+function renderRolloutChart(hourlyData, baseline) {
+  const canvas = document.getElementById('rolloutVitalsChart');
+  if (!canvas) {
+    console.warn('rolloutVitalsChart canvas not found');
+    return;
+  }
+  const ctx = canvas.getContext('2d');
+
+  if (rolloutDetailsChart) {
+    rolloutDetailsChart.destroy();
+  }
+
+  if (!hourlyData || hourlyData.length === 0) {
+    ctx.canvas.parentElement.innerHTML = '<div class="rollout-no-issues">No hourly data available yet (data typically appears 48+ hours after rollout start)</div>';
+    return;
+  }
+
+  const labels = hourlyData.map(h => {
+    const d = new Date(h.timestamp);
+    return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:00`;
+  });
+
+  const datasets = [
+    {
+      label: 'Crash Rate',
+      data: hourlyData.map(h => h.crashRate),
+      borderColor: '#f87171',
+      backgroundColor: 'rgba(248, 113, 113, 0.1)',
+      fill: false,
+      tension: 0.3,
+      pointRadius: 2
+    },
+    {
+      label: 'ANR Rate',
+      data: hourlyData.map(h => h.anrRate),
+      borderColor: '#fbbf24',
+      backgroundColor: 'rgba(251, 191, 36, 0.1)',
+      fill: false,
+      tension: 0.3,
+      pointRadius: 2
+    }
+  ];
+
+  // Add baseline reference line if available
+  if (baseline?.crashRate) {
+    datasets.push({
+      label: 'Baseline Crash',
+      data: hourlyData.map(() => baseline.crashRate),
+      borderColor: 'rgba(248, 113, 113, 0.4)',
+      borderDash: [5, 5],
+      fill: false,
+      pointRadius: 0
+    });
+  }
+
+  rolloutDetailsChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: { color: '#888', boxWidth: 12 }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#666', maxTicksLimit: 12 },
+          grid: { color: '#333' }
+        },
+        y: {
+          ticks: { color: '#666', callback: v => v.toFixed(2) + '%' },
+          grid: { color: '#333' },
+          beginAtZero: true
+        }
+      }
+    }
+  });
+}
+
+function renderRolloutSentryIssues(sentry) {
+  const container = document.getElementById('rolloutSentryIssues');
+  const link = document.getElementById('rolloutSentryLink');
+
+  if (sentry?.link) {
+    link.href = sentry.link;
+    link.style.display = 'inline';
+  } else {
+    link.style.display = 'none';
+  }
+
+  if (!sentry?.issues || sentry.issues.length === 0) {
+    container.innerHTML = '<div class="rollout-no-issues">No issues found for this version</div>';
+    return;
+  }
+
+  const getLevelIcon = (level) => {
+    if (level === 'fatal') return '<span class="rollout-issue-level fatal">F</span>';
+    if (level === 'error') return '<span class="rollout-issue-level error">E</span>';
+    return '<span class="rollout-issue-level warning">W</span>';
+  };
+
+  container.innerHTML = sentry.issues.map(issue => `
+    <div class="rollout-issue-item">
+      ${getLevelIcon(issue.level)}
+      <div class="rollout-issue-title">
+        <a href="${issue.permalink}" target="_blank">${escapeHtml(issue.title)}</a>
+      </div>
+      <div class="rollout-issue-users">${issue.userCount || 0} users</div>
+    </div>
+  `).join('');
+}

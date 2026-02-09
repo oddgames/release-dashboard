@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const config = require('../config');
 const jenkinsApi = require('../jenkins-api');
+const plasticApi = require('../plastic-api');
 const log = require('../logger');
 const { buildCache } = require('../services/cache');
 const { refreshBuilds } = require('../services/data-refresh');
@@ -234,6 +235,20 @@ router.get('/credentials', async (req, res) => {
     log.error('server', 'Failed to fetch credentials', { error: error.message });
     res.status(500).json({ error: error.message });
   }
+});
+
+// Get Plastic SCM query cache stats
+router.get('/plastic-cache/stats', (req, res) => {
+  const stats = plasticApi.getCacheStats();
+  log.debug('server', 'Plastic cache stats requested', stats);
+  res.json(stats);
+});
+
+// Clear Plastic SCM query cache
+router.post('/plastic-cache/clear', (req, res) => {
+  plasticApi.clearCache();
+  log.info('server', 'Plastic cache cleared by user');
+  res.json({ success: true, message: 'Plastic SCM cache cleared' });
 });
 
 module.exports = router;

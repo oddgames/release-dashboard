@@ -1,0 +1,109 @@
+{
+  "jenkins": {
+    "baseUrl": "https://your-jenkins.example.com",
+    "username": "your-username",
+    "apiToken": "your-api-token"
+  },
+  "ai": {
+    "provider": "gemini",
+    "apiKey": "your-gemini-api-key",
+    "model": "gemini-2.5-flash"
+  },
+  "sentry": {
+    "baseUrl": "https://sentry.io",
+    "authToken": "your-sentry-auth-token",
+    "organization": "your-org",
+    "statsPeriod": "14d"
+  },
+  "tracks": [
+    {
+      "id": "dev",
+      "displayName": "Dev",
+      "source": "jenkins",
+      "buildType": "Debug",
+      "order": 1
+    },
+    {
+      "id": "release",
+      "displayName": "Release",
+      "source": "jenkins",
+      "buildType": "Release",
+      "order": 2
+    },
+    {
+      "id": "storeInternal",
+      "displayName": "Internal",
+      "source": "store",
+      "iosSource": "testflight",
+      "androidSource": "internal",
+      "order": 3
+    },
+    {
+      "id": "storeAlpha",
+      "displayName": "Alpha",
+      "source": "store",
+      "iosSource": "betaGroup",
+      "iosBetaGroupName": "Alpha",
+      "androidSource": "alpha",
+      "order": 4
+    },
+    {
+      "id": "storeRelease",
+      "displayName": "Release",
+      "source": "store",
+      "iosSource": "live",
+      "androidSource": "production",
+      "order": 5
+    }
+  ],
+  "projects": {
+    "Your Game": {
+      "languages": ["en"],
+      "plasticRepo": "your_repo@server@cloud",
+      "sentryProject": "your-project",
+      "firebasePropertyId": "",
+      "firebaseProjectId": "",
+      "firebaseIosAppId": "",
+      "firebaseAndroidAppId": ""
+    }
+  },
+  "fastlane": {
+    "webhookSecret": "",
+    "appStoreConnect": {
+      "keyId": "your-key-id",
+      "issuerId": "your-issuer-id",
+      "keyPath": "fastlane/AuthKey_XXXXXXXXXX.p8"
+    },
+    "googlePlay": {
+      "jsonKeyPath": "fastlane/google_play_key.json",
+      "developerId": "your-developer-id"
+    }
+  },
+  "jobs": [
+    {
+      "name": "YourGame-iOS",
+      "displayName": "Your Game",
+      "platform": "ios",
+      "bundleId": "com.example.yourgame",
+      "jenkinsJob": "your_jenkins_job_ios"
+    },
+    {
+      "name": "YourGame-Android",
+      "displayName": "Your Game",
+      "platform": "android",
+      "bundleId": "com.example.yourgame",
+      "jenkinsJob": "your_jenkins_job_android",
+      "playAppId": "your-play-app-id"
+    }
+  ],
+  "discord": {
+    "webhookUrl": "",
+    "enabled": false
+  },
+  "allowedIPs": [
+    "127.0.0.1",
+    "::1"
+  ],
+  "refreshInterval": 60000,
+  "branchHistoryDays": 30
+}

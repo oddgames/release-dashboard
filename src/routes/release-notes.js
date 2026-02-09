@@ -6,10 +6,11 @@ const config = require('../config');
 const plasticApi = require('../plastic-api');
 const log = require('../logger');
 const { buildCache, RELEASE_NOTES_DIR } = require('../services/cache');
-const { genAI, generateReleaseNotes, translateReleaseNotes, generateComparisonSummary } = require('../services/ai');
+const { genAI, generateReleaseNotes, translateReleaseNotes, generateComparisonSummary, streamReleaseNotes } = require('../services/ai');
 const { extractChangeset } = require('../utils/build-helpers');
 
 // Get commits between changesets (without AI generation)
+// Now includes merged branch commits with merge tracking
 router.post('/get-commits', async (req, res) => {
   const { projectId, branch, fromChangeset, toChangeset } = req.body;
 
@@ -28,39 +29,30 @@ router.post('/get-commits', async (req, res) => {
     const projectName = projectJobs[0].displayName;
     const plasticRepo = config.projects?.[projectName]?.plasticRepo;
 
-    // Filter commits between the two changesets
     const fromNum = extractChangeset(fromChangeset) || 0;
     const toNum = extractChangeset(toChangeset) || Infinity;
 
-    log.info('server', 'Looking for commits in range', { fromNum, toNum, plasticRepo });
+    log.info('server', 'Looking for commits with merge history', { fromNum, toNum, plasticRepo });
 
     let commits = [];
 
-    // Try to get commits from Plastic directly
+    // Get commits with merge history from Plastic
     if (plasticRepo && fromNum > 0 && toNum < Infinity) {
       try {
-        const plasticCommits = await plasticApi.getChangesetRange(plasticRepo, fromNum, toNum, branch);
-        commits = plasticCommits.map(c => ({
+        // Get all changesets including merged branches (already has mergedFrom/mergedAt info)
+        const allChangesets = await plasticApi.getChangesetsWithMergeHistory(plasticRepo, fromNum, toNum);
+
+        commits = allChangesets.map(c => ({
           version: c.changeset,
           message: c.message,
-          author: c.author
+          author: c.author,
+          mergedFrom: c.mergedFrom || null,
+          mergedAt: c.mergedAt || null
         }));
-        log.info('server', `Found ${commits.length} commits from Plastic`);
+
+        log.info('server', `Found ${commits.length} commits including merged branches`);
       } catch (e) {
-        log.warn('server', 'Failed to fetch from Plastic, falling back to cache', { error: e.message });
-      }
-    }
-
-    // Fall back to cached data if Plastic fetch failed
-    if (commits.length === 0) {
-      const project = buildCache.projects?.find(p => p.id === projectId);
-      const branchData = project?.branches?.find(b => b.branch === branch);
-
-      if (branchData) {
-        commits = (branchData.allCommits || []).filter(c => {
-          const commitChangeset = parseInt(c.version) || 0;
-          return commitChangeset > fromNum && commitChangeset <= toNum;
-        });
+        log.warn('server', 'Failed to fetch with merge history', { error: e.message });
       }
     }
 
@@ -78,10 +70,12 @@ router.post('/get-commits', async (req, res) => {
 });
 
 // Generate release notes from commits between changesets
+// Accepts optional 'commits' array to skip Plastic fetch if commits are already available
 router.post('/generate-release-notes', async (req, res) => {
-  const { projectId, branch, fromChangeset, toChangeset } = req.body;
+  const { projectId, branch, fromChangeset, toChangeset, commits } = req.body;
+  const startTime = Date.now();
 
-  log.info('server', 'Generate release notes request', { projectId, branch, fromChangeset, toChangeset });
+  log.info('server', 'Generate release notes request', { projectId, branch, fromChangeset, toChangeset, hasPreloadedCommits: !!commits });
 
   try {
     // Find project config
@@ -95,57 +89,37 @@ router.post('/generate-release-notes', async (req, res) => {
 
     const projectName = projectJobs[0].displayName;
     const projectConfig = config.projects?.[projectName] || { languages: ['en'] };
-
-    // Get plastic repo config
     const plasticRepo = config.projects?.[projectName]?.plasticRepo;
 
-    // Filter commits between the two changesets
     const fromNum = extractChangeset(fromChangeset) || 0;
     const toNum = extractChangeset(toChangeset) || Infinity;
 
-    log.info('server', 'Looking for commits in range', { fromNum, toNum, plasticRepo });
-
-    let commits = [];
-
-    // Try to get commits from Plastic directly (more reliable than cache)
-    if (plasticRepo && fromNum > 0 && toNum < Infinity) {
-      try {
-        const plasticCommits = await plasticApi.getChangesetRange(plasticRepo, fromNum, toNum, branch);
-        commits = plasticCommits.map(c => ({
-          version: c.changeset,
-          message: c.message,
-          author: c.author
-        }));
-        log.info('server', `Found ${commits.length} commits from Plastic`);
-      } catch (e) {
-        log.warn('server', 'Failed to fetch from Plastic, falling back to cache', { error: e.message });
-      }
+    // Use preloaded commits if provided, otherwise fetch from Plastic
+    let allChangesets = [];
+    if (commits && commits.length > 0) {
+      // Use preloaded commits (already fetched by /api/get-commits)
+      allChangesets = commits.map(c => ({
+        changeset: c.version || c.changeset,
+        message: c.message,
+        author: c.author,
+        mergedFrom: c.mergedFrom,
+        mergedAt: c.mergedAt
+      }));
+      log.info('server', `Using ${allChangesets.length} preloaded commits`);
+    } else if (plasticRepo && fromNum > 0 && toNum < Infinity) {
+      // Fetch from Plastic
+      const plasticStart = Date.now();
+      allChangesets = await plasticApi.getChangesetsWithMergeHistory(plasticRepo, fromNum, toNum);
+      log.info('server', `Found ${allChangesets.length} changesets including merged branches in ${Date.now() - plasticStart}ms`);
     }
 
-    // Fall back to cached data if Plastic fetch failed or not configured
-    if (commits.length === 0) {
-      const project = buildCache.projects?.find(p => p.id === projectId);
-      const branchData = project?.branches?.find(b => b.branch === branch);
-
-      if (branchData) {
-        log.debug('server', 'Using cached commits', { totalCommits: branchData.allCommits?.length });
-        commits = (branchData.allCommits || []).filter(c => {
-          const commitChangeset = parseInt(c.version) || 0;
-          return commitChangeset > fromNum && commitChangeset <= toNum;
-        });
-      }
-    }
-
-    // If no commits found, return empty notes (user can write their own)
-    if (commits.length === 0) {
-      log.warn('server', 'No commits found between changesets', { fromNum, toNum });
-
-      // Return empty release notes structure for all languages
+    // If no changesets found, return empty notes
+    if (allChangesets.length === 0) {
+      log.warn('server', 'No commits found', { fromNum, toNum, elapsed: Date.now() - startTime });
       const emptyNotes = {};
       for (const lang of projectConfig.languages) {
         emptyNotes[lang] = '';
       }
-
       return res.json({
         success: true,
         projectName,
@@ -156,32 +130,93 @@ router.post('/generate-release-notes', async (req, res) => {
       });
     }
 
-    // Generate release notes using AI (if configured)
+    // Generate release notes using AI (English only - translate on promote)
     let releaseNotes;
     if (genAI) {
-      const commitMessages = commits.map(c => `- ${c.message} (${c.author})`).join('\n');
-      releaseNotes = await generateReleaseNotes(projectName, commitMessages, projectConfig.languages);
+      // Use all changesets including those from merged branches
+      const commitMessages = allChangesets.map(c => `- ${c.message} (${c.author})`).join('\n');
+
+      const aiStart = Date.now();
+      // Only generate English - translations happen when user promotes
+      releaseNotes = await generateReleaseNotes(projectName, commitMessages, ['en']);
+      log.info('server', `AI generation complete in ${Date.now() - aiStart}ms`);
     } else {
-      // No AI configured - return commit list as starting point
       log.info('server', 'AI not configured, returning commit list');
-      const commitList = commits.map(c => `- ${c.message}`).join('\n');
-      releaseNotes = {};
-      for (const lang of projectConfig.languages) {
-        releaseNotes[lang] = lang === 'en' ? commitList : '';
-      }
+      const commitList = allChangesets.map(c => `- ${c.message}`).join('\n');
+      releaseNotes = { en: commitList };
     }
+
+    log.info('server', `Release notes generated in ${Date.now() - startTime}ms total`);
 
     res.json({
       success: true,
       projectName,
       fromChangeset,
       toChangeset,
-      commitCount: commits.length,
+      commitCount: allChangesets.length,
       releaseNotes
     });
   } catch (error) {
-    log.error('server', 'Generate release notes failed', { error: error.message });
+    log.error('server', 'Generate release notes failed', { error: error.message, elapsed: Date.now() - startTime });
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Stream release notes generation (SSE endpoint)
+router.post('/stream-release-notes', async (req, res) => {
+  const { projectId, commits } = req.body;
+
+  log.info('server', 'Stream release notes request', { projectId, commitCount: commits?.length });
+
+  // Set up SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  try {
+    if (!genAI) {
+      res.write(`data: ${JSON.stringify({ error: 'AI not configured' })}\n\n`);
+      res.end();
+      return;
+    }
+
+    // Find project config
+    const projectJobs = config.jobs.filter(job =>
+      job.displayName.toLowerCase().replace(/\s+/g, '-') === projectId
+    );
+
+    if (projectJobs.length === 0) {
+      res.write(`data: ${JSON.stringify({ error: 'Project not found' })}\n\n`);
+      res.end();
+      return;
+    }
+
+    const projectName = projectJobs[0].displayName;
+
+    // Build commit messages string
+    const commitMessages = (commits || []).map(c => `- ${c.message} (${c.author || 'unknown'})`).join('\n');
+
+    if (!commitMessages) {
+      res.write(`data: ${JSON.stringify({ error: 'No commits provided' })}\n\n`);
+      res.end();
+      return;
+    }
+
+    // Stream the response
+    for await (const chunk of streamReleaseNotes(projectName, commitMessages)) {
+      res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+    }
+
+    // Send completion signal
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+
+    log.info('server', 'Stream release notes completed', { projectId });
+  } catch (error) {
+    log.error('server', 'Stream release notes failed', { error: error.message });
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
   }
 });
 

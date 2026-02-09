@@ -1,0 +1,38 @@
+version: "3.8"
+
+services:
+  dashboard:
+    build: .
+    container_name: release-dashboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount config.json with project/job definitions
+      - ./config.json:/app/config.json:ro
+      # Mount fastlane keys if using file-based auth
+      - ./fastlane/AuthKey_VRZ37D68BB.p8:/app/fastlane/AuthKey_VRZ37D68BB.p8:ro
+      - ./fastlane/google_play_key.json:/app/fastlane/google_play_key.json:ro
+      # Persistent data (build cache)
+      - dashboard-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Secrets can be overridden via environment variables instead of config.json
+      # Uncomment and set these if you prefer env vars over config.json:
+      # - JENKINS_BASE_URL=
+      # - JENKINS_USERNAME=
+      # - JENKINS_API_TOKEN=
+      # - AI_API_KEY=
+      # - SENTRY_AUTH_TOKEN=
+      # - DISCORD_WEBHOOK_URL=
+      # - DISCORD_ENABLED=false
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  dashboard-data:

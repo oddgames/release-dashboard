@@ -261,10 +261,102 @@ async function getAllProjectIssueCounts(projectConfigs, deployedVersionsByProjec
   return results;
 }
 
+/**
+ * Get detailed issues for a specific version with severity breakdown
+ * Used for rollout health modal
+ * Fetches issues directly from Sentry API with release filter instead of local filtering
+ * @param {string} projectSlug - Sentry project slug
+ * @param {string} version - Version string (e.g., '3.92.12651')
+ * @returns {Promise<Object>} Detailed issue breakdown
+ */
+async function getIssuesForVersion(projectSlug, version) {
+  if (!authToken || !organization) {
+    return { error: 'Sentry not configured' };
+  }
+
+  // Build the release filter query - include all issue types (errors and ANRs)
+  const query = `is:unresolved release.version:${version}`;
+  const endpoint = `/projects/${organization}/${projectSlug}/issues/?query=${encodeURIComponent(query)}&statsPeriod=14d&sort=freq&limit=50`;
+
+  log.debug('sentry-api', `Fetching issues for ${projectSlug} release ${version}`, { query });
+
+  let filteredIssues = [];
+
+  try {
+    filteredIssues = await sentryRequest(endpoint);
+    log.info('sentry-api', `Found ${filteredIssues.length} issues for ${projectSlug} v${version}`);
+  } catch (error) {
+    log.warn('sentry-api', `Failed to fetch issues for ${projectSlug} v${version}`, { error: error.message });
+    // Fall back to empty array on error
+    filteredIssues = [];
+  }
+
+  // If no results, try alternative query format
+  if (filteredIssues.length === 0) {
+    const altQuery = `is:unresolved release:*${version}*`;
+    const altEndpoint = `/projects/${organization}/${projectSlug}/issues/?query=${encodeURIComponent(altQuery)}&statsPeriod=14d&sort=freq`;
+    log.debug('sentry-api', `Trying alternative query for ${projectSlug}`, { query: altQuery });
+
+    try {
+      filteredIssues = await sentryRequest(altEndpoint);
+      log.info('sentry-api', `Alternative query found ${filteredIssues.length} issues for ${projectSlug} v${version}`);
+    } catch (error) {
+      log.debug('sentry-api', `Alternative query also failed`, { error: error.message });
+    }
+  }
+
+  // Sort by user count (most impactful first)
+  filteredIssues.sort((a, b) => (b.userCount || 0) - (a.userCount || 0));
+
+  // Categorize by severity and count totals
+  let criticalCount = 0;
+  let affectedUsers = 0;
+  let totalEventCount = 0;
+
+  for (const issue of filteredIssues) {
+    affectedUsers += issue.userCount || 0;
+    // count is the number of events/occurrences
+    totalEventCount += parseInt(issue.count || '0', 10);
+    // Consider fatal and error with high user count as critical
+    if (issue.level === 'fatal' || (issue.level === 'error' && (issue.userCount || 0) >= 10)) {
+      criticalCount++;
+    }
+  }
+
+  // Build link to Sentry with version filter
+  const link = `https://${organization}.sentry.io/issues/?project=${projectSlug}&query=${encodeURIComponent(`is:unresolved release.version:${version}`)}&statsPeriod=14d`;
+
+  log.debug('sentry-api', `Issues for ${projectSlug} v${version}`, {
+    total: filteredIssues.length,
+    critical: criticalCount,
+    users: affectedUsers,
+    events: totalEventCount
+  });
+
+  return {
+    totalCount: filteredIssues.length,
+    criticalCount,
+    affectedUsers,
+    eventCount: totalEventCount,
+    link,
+    issues: filteredIssues.slice(0, 10).map(issue => ({
+      id: issue.id,
+      title: issue.title,
+      level: issue.level,
+      count: parseInt(issue.count || '0', 10),
+      userCount: issue.userCount || 0,
+      permalink: issue.permalink,
+      firstSeen: issue.firstSeen,
+      lastSeen: issue.lastSeen
+    }))
+  };
+}
+
 module.exports = {
   sentryRequest,
   getProjectIssues7d,
   getAllProjectIssues,
   getProjectIssueCounts,
-  getAllProjectIssueCounts
+  getAllProjectIssueCounts,
+  getIssuesForVersion
 };

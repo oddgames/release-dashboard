@@ -46,43 +46,101 @@ Rules:
 
 // AI helper: Generate release notes from commit messages
 async function generateReleaseNotes(projectName, commitMessages, languages) {
-  const modelName = config.ai?.model || 'gemini-3-pro-latest';
+  // Use Gemini 3 Pro Preview for high-quality English generation
+  const modelName = config.ai?.model || 'gemini-3-pro-preview';
 
   log.info('server', 'Generating release notes with AI', { projectName, model: modelName });
 
-  const prompt = `You are a mobile game release notes writer. Generate player-friendly release notes for "${projectName}" based on these development commits:
+  const prompt = `Write concise app store release notes for "${projectName}" based on these commits:
 
 ${commitMessages}
 
-Guidelines:
-- Write for players, not developers - focus on what they'll experience
-- Group changes into categories like "New Features", "Improvements", "Bug Fixes" where applicable
-- Keep it concise and engaging
-- Do NOT use emojis
-- Avoid technical jargon (no mentions of "refactoring", "API", "SDK", etc.)
-- If commits are mostly internal changes, summarize as general improvements
-- Maximum 200 words
+Format:
+NEW
+- Feature 1
+- Feature 2
 
-Format the output as plain text suitable for app store release notes.`;
+FIXED
+- Bug fix 1
+- Bug fix 2
+
+Rules:
+- Start DIRECTLY with NEW or FIXED - no preamble, no intro text, no "Here are..."
+- Be direct and factual, no marketing fluff or hype
+- No emojis, no exclamation marks
+- Skip internal/technical changes unless user-facing
+- Target 400-500 characters total (app store limit is 500)
+- Keep bullet points short but PRESERVE SPECIFIC NAMES (truck names, level names, character names, item names, etc.)
+- Example: "New trucks: Grave Digger, El Toro Loco" NOT "New monster trucks added"
+- Group related items: "New trucks: X, Y, Z" instead of separate bullets for each
+- If no new features, omit NEW section
+- If no bug fixes, omit FIXED section`;
 
   try {
     const model = genAI.getGenerativeModel({ model: modelName });
-    const result = await model.generateContent(prompt);
-    const englishNotes = result.response.text();
 
-    // Generate translations for all languages
+    // Get target languages (exclude English)
+    const targetLanguages = languages.filter(lang => lang !== 'en');
+
+    // Generate English with timeout and retry
+    const englishStart = Date.now();
+    log.info('server', 'Starting English generation...');
+
+    let englishNotes;
+    let lastError;
+    const maxRetries = 2;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        log.info('server', `Generation attempt ${attempt}/${maxRetries}`);
+
+        // Create a timeout promise (60 seconds)
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('AI generation timed out after 60 seconds')), 60000);
+        });
+
+        // Race between generation and timeout
+        const englishResult = await Promise.race([
+          model.generateContent(prompt),
+          timeoutPromise
+        ]);
+
+        englishNotes = englishResult.response.text();
+        log.info('server', `English generation done in ${Date.now() - englishStart}ms`);
+        break; // Success, exit retry loop
+      } catch (error) {
+        lastError = error;
+        log.warn('server', `Attempt ${attempt} failed: ${error.message}`);
+
+        if (attempt < maxRetries) {
+          log.info('server', 'Retrying in 2 seconds...');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+    }
+
+    if (!englishNotes) {
+      throw lastError || new Error('Failed to generate release notes after retries');
+    }
+
+    // If no other languages, return just English
+    if (targetLanguages.length === 0) {
+      return { en: englishNotes };
+    }
+
+    // Translate in parallel with Flash model (silent)
     const translations = await translateReleaseNotes(englishNotes, languages);
-
     return translations;
   } catch (error) {
-    log.error('server', 'AI generation failed', { error: error.message });
+    log.error('server', 'AI generation failed', { error: error.message, stack: error.stack });
     throw new Error(`AI generation failed: ${error.message}`);
   }
 }
 
 // AI helper: Translate release notes to multiple languages
 async function translateReleaseNotes(englishNotes, languages) {
-  const modelName = config.ai?.model || 'gemini-3-pro-latest';
+  // Use Gemini 2.5 Flash for fast translations
+  const modelName = 'gemini-2.5-flash';
   const translations = { en: englishNotes };
 
   // Get languages that need translation (exclude English)
@@ -91,8 +149,6 @@ async function translateReleaseNotes(englishNotes, languages) {
   if (targetLanguages.length === 0) {
     return translations;
   }
-
-  log.info('server', 'Translating release notes', { targetLanguages });
 
   const languageNames = {
     'de': 'German',
@@ -114,35 +170,50 @@ async function translateReleaseNotes(englishNotes, languages) {
     'id': 'Indonesian'
   };
 
-  const prompt = `Translate these mobile game release notes to the following languages. Maintain the same tone and formatting.
+  // Split languages into batches for parallel translation
+  const batchSize = 4;
+  const batches = [];
+  for (let i = 0; i < targetLanguages.length; i += batchSize) {
+    batches.push(targetLanguages.slice(i, i + batchSize));
+  }
 
-Original English:
+  log.debug('server', 'Translating release notes', { languages: targetLanguages.length });
+
+  const model = genAI.getGenerativeModel({ model: modelName });
+
+  // Run all batches in parallel
+  const batchPromises = batches.map(async (batchLangs) => {
+    const prompt = `Translate these release notes. Keep same format.
+
+English:
 ${englishNotes}
 
-Translate to: ${targetLanguages.map(lang => `${languageNames[lang] || lang} (${lang})`).join(', ')}
+Translate to: ${batchLangs.map(lang => `${languageNames[lang] || lang} (${lang})`).join(', ')}
 
-Output format - provide each translation clearly labeled:
+Output format:
 [LANG_CODE]
-translated text here
+translated text
 
-For example:
+Example:
 [de]
-German text here
+German text here`;
 
-[fr]
-French text here`;
+    const result = await model.generateContent(prompt);
+    return result.response.text();
+  });
 
   try {
-    const model = genAI.getGenerativeModel({ model: modelName });
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
+    const batchResults = await Promise.all(batchPromises);
 
-    // Parse translations from response
-    for (const lang of targetLanguages) {
-      const regex = new RegExp(`\\[${lang}\\]\\s*([\\s\\S]*?)(?=\\[\\w|$)`, 'i');
-      const match = responseText.match(regex);
-      if (match) {
-        translations[lang] = match[1].trim();
+    // Parse all batch results
+    for (const responseText of batchResults) {
+      for (const lang of targetLanguages) {
+        if (translations[lang]) continue; // Already have this one
+        const regex = new RegExp(`\\[${lang}\\]\\s*([\\s\\S]*?)(?=\\[\\w|$)`, 'i');
+        const match = responseText.match(regex);
+        if (match) {
+          translations[lang] = match[1].trim();
+        }
       }
     }
 
@@ -154,9 +225,52 @@ French text here`;
   }
 }
 
+// Streaming version of release notes generation
+async function* streamReleaseNotes(projectName, commitMessages) {
+  const modelName = config.ai?.model || 'gemini-2.0-flash';
+
+  log.info('server', 'Streaming release notes with AI', { projectName, model: modelName });
+
+  const prompt = `Write concise app store release notes for "${projectName}" based on these commits:
+
+${commitMessages}
+
+Format:
+NEW
+- Feature 1
+- Feature 2
+
+FIXED
+- Bug fix 1
+- Bug fix 2
+
+Rules:
+- Start DIRECTLY with NEW or FIXED - no preamble, no intro text, no "Here are..."
+- Be direct and factual, no marketing fluff or hype
+- No emojis, no exclamation marks
+- Skip internal/technical changes unless user-facing
+- Target 400-500 characters total (app store limit is 500)
+- Keep bullet points short but PRESERVE SPECIFIC NAMES (truck names, level names, character names, item names, etc.)
+- Example: "New trucks: Grave Digger, El Toro Loco" NOT "New monster trucks added"
+- Group related items: "New trucks: X, Y, Z" instead of separate bullets for each
+- If no new features, omit NEW section
+- If no bug fixes, omit FIXED section`;
+
+  const model = genAI.getGenerativeModel({ model: modelName });
+  const result = await model.generateContentStream(prompt);
+
+  for await (const chunk of result.stream) {
+    const text = chunk.text();
+    if (text) {
+      yield text;
+    }
+  }
+}
+
 module.exports = {
   genAI,
   generateComparisonSummary,
   generateReleaseNotes,
-  translateReleaseNotes
+  translateReleaseNotes,
+  streamReleaseNotes
 };

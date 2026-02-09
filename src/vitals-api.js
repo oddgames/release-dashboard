@@ -269,6 +269,337 @@ async function getAndroidVitals(packageName, options = {}) {
   }
 }
 
+/**
+ * Get HOURLY Android crash and ANR rates for a specific version
+ * Used for real-time rollout monitoring - fetches granular hourly data
+ * @param {string} packageName - Android package name
+ * @param {string} versionCode - Specific version code to query
+ * @param {Date} startDate - Start date for query
+ * @param {Date} endDate - End date for query (default: now - 2 days for freshness)
+ * @returns {object} - { hourly: [{ timestamp, crashRate, anrRate, users }], summary: {...} }
+ */
+async function getHourlyVersionVitals(packageName, versionCode, startDate, endDate) {
+  // Cache key includes version and date range
+  const cacheKey = `hourly:${packageName}:${versionCode}:${startDate?.toISOString() || 'default'}`;
+
+  // Shorter TTL for hourly data (30 min) since we want fresher data during rollout
+  const cached = vitalsCache.android.get(cacheKey);
+  if (cached && Date.now() - cached.time < 30 * 60 * 1000) {
+    log.debug('vitals-api', `Hourly cache hit: ${cacheKey}`);
+    return cached.value;
+  }
+
+  log.info('vitals-api', `Fetching hourly vitals: ${packageName} v${versionCode}`);
+
+  try {
+    const reporting = await getReportingClient();
+
+    // Default end date is 2 days ago (Google Play freshness lag)
+    let queryEnd = endDate ? new Date(endDate) : new Date();
+    if (!endDate) {
+      queryEnd.setUTCDate(queryEnd.getUTCDate() - 2);
+    }
+
+    // Default start is 7 days before end
+    let queryStart = startDate ? new Date(startDate) : new Date(queryEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    // Format dates for hourly queries (uses full timestamp)
+    const formatDateTime = (d) => ({
+      year: d.getUTCFullYear(),
+      month: d.getUTCMonth() + 1,
+      day: d.getUTCDate(),
+      hours: d.getUTCHours()
+    });
+
+    // Log the query parameters for debugging
+    log.debug('vitals-api', `Hourly query params for ${packageName} v${versionCode}`, {
+      startTime: formatDateTime(queryStart),
+      endTime: formatDateTime(queryEnd),
+      filter: `versionCode = ${versionCode}`
+    });
+
+    // Fetch crash and ANR rates with HOURLY aggregation
+    // Note: Rolling averages (7d weighted) are NOT available in hourly mode
+    const [crashResponse, anrResponse] = await Promise.all([
+      reporting.vitals.crashrate.query({
+        name: `apps/${packageName}/crashRateMetricSet`,
+        requestBody: {
+          timelineSpec: {
+            aggregationPeriod: 'HOURLY',
+            startTime: formatDateTime(queryStart),
+            endTime: formatDateTime(queryEnd)
+          },
+          dimensions: ['versionCode'],
+          metrics: ['crashRate', 'userPerceivedCrashRate', 'distinctUsers'],
+          filter: `versionCode = ${versionCode}`,
+          pageSize: 200 // Get up to 200 hourly data points (~8 days)
+        }
+      }).catch(e => {
+        log.error('vitals-api', `Hourly crash query failed for ${packageName} v${versionCode}`, { error: e.message });
+        return { error: e.message };
+      }),
+
+      reporting.vitals.anrrate.query({
+        name: `apps/${packageName}/anrRateMetricSet`,
+        requestBody: {
+          timelineSpec: {
+            aggregationPeriod: 'HOURLY',
+            startTime: formatDateTime(queryStart),
+            endTime: formatDateTime(queryEnd)
+          },
+          dimensions: ['versionCode'],
+          metrics: ['anrRate', 'userPerceivedAnrRate', 'distinctUsers'],
+          filter: `versionCode = ${versionCode}`,
+          pageSize: 200
+        }
+      }).catch(e => {
+        log.error('vitals-api', `Hourly ANR query failed for ${packageName} v${versionCode}`, { error: e.message });
+        return { error: e.message };
+      })
+    ]);
+
+    const result = {
+      packageName,
+      versionCode,
+      hourly: [],
+      summary: {
+        crashRate: null,
+        anrRate: null,
+        totalUsers: 0
+      },
+      queryStart: queryStart.toISOString(),
+      queryEnd: queryEnd.toISOString(),
+      fetchedAt: new Date().toISOString()
+    };
+
+    // Helper to parse decimal value (convert to percentage)
+    const parseDecimal = (metric) => {
+      if (metric?.decimalValue?.value) {
+        return parseFloat(metric.decimalValue.value) * 100;
+      }
+      return null;
+    };
+
+    // Log response structure for debugging
+    log.debug('vitals-api', `Hourly crash response for ${packageName} v${versionCode}`, {
+      hasError: !!crashResponse.error,
+      error: crashResponse.error,
+      hasData: !!crashResponse.data,
+      rowCount: crashResponse.data?.rows?.length || 0
+    });
+
+    log.debug('vitals-api', `Hourly ANR response for ${packageName} v${versionCode}`, {
+      hasError: !!anrResponse.error,
+      error: anrResponse.error,
+      hasData: !!anrResponse.data,
+      rowCount: anrResponse.data?.rows?.length || 0
+    });
+
+    // Build hourly data map from crash response
+    const hourlyMap = new Map();
+
+    if (!crashResponse.error && crashResponse.data?.rows?.length > 0) {
+      for (const row of crashResponse.data.rows) {
+        // Extract timestamp from startTime
+        const startTime = row.startTime;
+        if (!startTime) continue;
+
+        const timestamp = new Date(Date.UTC(
+          startTime.year,
+          startTime.month - 1,
+          startTime.day,
+          startTime.hours || 0
+        )).toISOString();
+
+        const metricsArray = row.metrics || {};
+        const crashRate = parseDecimal(metricsArray['0']);
+        const userPerceivedCrashRate = parseDecimal(metricsArray['1']);
+        const distinctUsers = parseInt(metricsArray['2']?.decimalValue?.value || '0');
+
+        hourlyMap.set(timestamp, {
+          timestamp,
+          crashRate,
+          userPerceivedCrashRate,
+          anrRate: null,
+          userPerceivedAnrRate: null,
+          users: distinctUsers
+        });
+
+        result.summary.totalUsers += distinctUsers;
+      }
+    }
+
+    // Merge ANR data into hourly map
+    if (!anrResponse.error && anrResponse.data?.rows?.length > 0) {
+      for (const row of anrResponse.data.rows) {
+        const startTime = row.startTime;
+        if (!startTime) continue;
+
+        const timestamp = new Date(Date.UTC(
+          startTime.year,
+          startTime.month - 1,
+          startTime.day,
+          startTime.hours || 0
+        )).toISOString();
+
+        const metricsArray = row.metrics || {};
+        const anrRate = parseDecimal(metricsArray['0']);
+        const userPerceivedAnrRate = parseDecimal(metricsArray['1']);
+
+        if (hourlyMap.has(timestamp)) {
+          const entry = hourlyMap.get(timestamp);
+          entry.anrRate = anrRate;
+          entry.userPerceivedAnrRate = userPerceivedAnrRate;
+        } else {
+          const distinctUsers = parseInt(metricsArray['2']?.decimalValue?.value || '0');
+          hourlyMap.set(timestamp, {
+            timestamp,
+            crashRate: null,
+            userPerceivedCrashRate: null,
+            anrRate,
+            userPerceivedAnrRate,
+            users: distinctUsers
+          });
+        }
+      }
+    }
+
+    // Convert map to sorted array
+    result.hourly = Array.from(hourlyMap.values())
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    // Calculate summary (weighted average of last 24h)
+    const last24h = result.hourly.slice(-24);
+    if (last24h.length > 0) {
+      let totalCrashWeighted = 0;
+      let totalAnrWeighted = 0;
+      let totalWeight = 0;
+
+      for (const h of last24h) {
+        if (h.crashRate !== null && h.users > 0) {
+          totalCrashWeighted += h.crashRate * h.users;
+          totalWeight += h.users;
+        }
+        if (h.anrRate !== null && h.users > 0) {
+          totalAnrWeighted += h.anrRate * h.users;
+        }
+      }
+
+      if (totalWeight > 0) {
+        result.summary.crashRate = totalCrashWeighted / totalWeight;
+        result.summary.anrRate = totalAnrWeighted / totalWeight;
+      }
+    }
+
+    // Cache the result
+    vitalsCache.android.set(cacheKey, { value: result, time: Date.now() });
+
+    log.info('vitals-api', `Hourly vitals for ${packageName} v${versionCode}`, {
+      hourlyPoints: result.hourly.length,
+      summaryCrash: result.summary.crashRate?.toFixed(2),
+      summaryAnr: result.summary.anrRate?.toFixed(2)
+    });
+
+    return result;
+  } catch (error) {
+    log.error('vitals-api', `Failed to fetch hourly vitals: ${packageName} v${versionCode}`, { error: error.message });
+    return { error: error.message, packageName, versionCode };
+  }
+}
+
+/**
+ * Get list of recent version codes for a package with their first-seen dates
+ * Used to establish baseline comparison for rollout health
+ * @param {string} packageName - Android package name
+ * @param {number} days - How many days of history to check (default 90)
+ * @returns {object[]} - Array of { versionCode, firstSeen, lastSeen }
+ */
+async function getRecentVersions(packageName, days = 90) {
+  const cacheKey = `versions:${packageName}`;
+  const cached = vitalsCache.android.get(cacheKey);
+  if (cached && Date.now() - cached.time < 60 * 60 * 1000) { // 1 hour TTL
+    return cached.value;
+  }
+
+  log.info('vitals-api', `Fetching recent versions for ${packageName}`);
+
+  try {
+    const reporting = await getReportingClient();
+
+    const endDate = new Date();
+    endDate.setUTCDate(endDate.getUTCDate() - 2); // 2 day freshness lag
+    const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+
+    const formatDate = (d) => ({
+      day: d.getUTCDate(),
+      month: d.getUTCMonth() + 1,
+      year: d.getUTCFullYear()
+    });
+
+    // Query daily data with versionCode dimension to find all versions
+    const response = await reporting.vitals.crashrate.query({
+      name: `apps/${packageName}/crashRateMetricSet`,
+      requestBody: {
+        timelineSpec: {
+          aggregationPeriod: 'DAILY',
+          startTime: formatDate(startDate),
+          endTime: formatDate(endDate)
+        },
+        dimensions: ['versionCode'],
+        metrics: ['distinctUsers'],
+        pageSize: 100
+      }
+    });
+
+    // Build version info from response
+    const versionMap = new Map();
+
+    if (response.data?.rows) {
+      for (const row of response.data.rows) {
+        const versionDim = (row.dimensions || []).find(d => d.dimension === 'versionCode');
+        const versionCode = versionDim?.stringValue || versionDim?.int64Value;
+        if (!versionCode) continue;
+
+        const startTime = row.startTime;
+        if (!startTime) continue;
+
+        const date = new Date(Date.UTC(startTime.year, startTime.month - 1, startTime.day));
+        const users = parseInt(row.metrics?.['0']?.decimalValue?.value || '0');
+
+        if (!versionMap.has(versionCode)) {
+          versionMap.set(versionCode, {
+            versionCode,
+            firstSeen: date.toISOString(),
+            lastSeen: date.toISOString(),
+            totalUsers: users
+          });
+        } else {
+          const entry = versionMap.get(versionCode);
+          if (date < new Date(entry.firstSeen)) {
+            entry.firstSeen = date.toISOString();
+          }
+          if (date > new Date(entry.lastSeen)) {
+            entry.lastSeen = date.toISOString();
+          }
+          entry.totalUsers += users;
+        }
+      }
+    }
+
+    // Convert to array and sort by firstSeen descending (newest first)
+    const versions = Array.from(versionMap.values())
+      .sort((a, b) => new Date(b.firstSeen) - new Date(a.firstSeen));
+
+    vitalsCache.android.set(cacheKey, { value: versions, time: Date.now() });
+
+    log.info('vitals-api', `Found ${versions.length} versions for ${packageName}`);
+    return versions;
+  } catch (error) {
+    log.error('vitals-api', `Failed to fetch versions: ${packageName}`, { error: error.message });
+    return [];
+  }
+}
+
 // ============================================
 // App Store Connect Power & Performance API
 // ============================================
@@ -645,5 +976,7 @@ module.exports = {
   getAndroidVitals,
   getIOSVitals,
   getIOSBuildDiagnostics,
-  getAllVitals
+  getAllVitals,
+  getHourlyVersionVitals,
+  getRecentVersions
 };
