@@ -27,6 +27,16 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: Date.now() });
 });
 
+// Version endpoint (before IP allowlist for monitoring)
+const pkg = require('../package.json');
+app.get('/api/version', (req, res) => {
+  res.json({
+    version: pkg.version,
+    startedAt: new Date().toISOString(),
+    node: process.version
+  });
+});
+
 // IP allowlist middleware
 const allowedIPs = config.allowedIPs || [];
 if (allowedIPs.length > 0) {

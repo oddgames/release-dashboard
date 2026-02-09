@@ -144,3 +144,14 @@ The dashboard shows detailed error modals for failures with:
 - Error message and technical details
 - Context-aware suggestions for common issues (permissions, rate limits, etc.)
 - Copy button for sharing error details
+
+## Deployment
+
+Deploy via `/deploy` command. This will:
+1. Move unreleased changes below into a versioned CHANGELOG entry
+2. Bump version in package.json
+3. Commit, tag, and push to GitHub
+4. Portainer auto-deploys via webhook
+
+### Unreleased Changes
+(none)
