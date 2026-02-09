@@ -1,23 +1,45 @@
 /**
  * Configuration loader
  *
- * Loads config from config.json, with environment variable overrides for secrets.
- * This allows local development with config.json while using AWS Secrets Manager
- * or environment variables in production.
+ * Priority (highest to lowest):
+ *   1. Individual environment variables (secrets)
+ *   2. CONFIG_JSON env var (full config as JSON string, for Docker/Portainer)
+ *   3. config.json file (local development)
  */
 
 const fs = require('fs');
 const path = require('path');
 
-// Load base config from JSON file
+// Load base config - prefer CONFIG_JSON env var, fall back to config.json file
 let baseConfig = {};
-const configPath = path.join(__dirname, '../config.json');
 
-if (fs.existsSync(configPath)) {
+if (process.env.CONFIG_JSON) {
   try {
-    baseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    baseConfig = JSON.parse(process.env.CONFIG_JSON);
+    console.log('Config loaded from CONFIG_JSON environment variable');
   } catch (error) {
-    console.error('Failed to load config.json:', error.message);
+    console.error('Failed to parse CONFIG_JSON:', error.message);
+  }
+} else {
+  const configPath = path.join(__dirname, '../config.json');
+  if (fs.existsSync(configPath)) {
+    try {
+      baseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      console.log('Config loaded from config.json');
+    } catch (error) {
+      console.error('Failed to load config.json:', error.message);
+    }
+  }
+}
+
+// Helper to parse JSON from env vars
+function parseJsonEnv(name) {
+  if (!process.env[name]) return null;
+  try {
+    return JSON.parse(process.env[name]);
+  } catch (e) {
+    console.error(`Failed to parse ${name} env var as JSON:`, e.message);
+    return null;
   }
 }
 
@@ -67,11 +89,11 @@ const config = {
     }
   },
 
-  // Non-secret config (from config.json only)
-  tracks: baseConfig.tracks || [],
-  projects: baseConfig.projects || {},
-  jobs: baseConfig.jobs || [],
-  allowedIPs: baseConfig.allowedIPs || [],
+  // Non-secret config (env var JSON overrides or from base config)
+  tracks: parseJsonEnv('TRACKS') || baseConfig.tracks || [],
+  projects: parseJsonEnv('PROJECTS') || baseConfig.projects || {},
+  jobs: parseJsonEnv('JOBS') || baseConfig.jobs || [],
+  allowedIPs: parseJsonEnv('ALLOWED_IPS') || baseConfig.allowedIPs || [],
   refreshInterval: parseInt(process.env.REFRESH_INTERVAL) || baseConfig.refreshInterval || 60000,
   branchHistoryDays: parseInt(process.env.BRANCH_HISTORY_DAYS) || baseConfig.branchHistoryDays || 30
 };

@@ -8,23 +8,24 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      # Mount config.json with project/job definitions
-      - ./config.json:/app/config.json:ro
-      # Mount fastlane keys if using file-based auth
-      - ./fastlane/AuthKey_VRZ37D68BB.p8:/app/fastlane/AuthKey_VRZ37D68BB.p8:ro
-      - ./fastlane/google_play_key.json:/app/fastlane/google_play_key.json:ro
       # Persistent data (build cache)
       - dashboard-data:/app/data
     environment:
       - NODE_ENV=production
       - PORT=3000
-      # Secrets can be overridden via environment variables instead of config.json
-      # Uncomment and set these if you prefer env vars over config.json:
+      # Full config as JSON string - paste your entire config.json here
+      # This is the easiest way to configure everything in Portainer
+      - CONFIG_JSON=
+      # Or override individual secrets (these take priority over CONFIG_JSON):
       # - JENKINS_BASE_URL=
       # - JENKINS_USERNAME=
       # - JENKINS_API_TOKEN=
       # - AI_API_KEY=
       # - SENTRY_AUTH_TOKEN=
+      # - ASC_KEY_ID=
+      # - ASC_ISSUER_ID=
+      # - ASC_KEY_CONTENT=
+      # - GOOGLE_PLAY_KEY_CONTENT=
       # - DISCORD_WEBHOOK_URL=
       # - DISCORD_ENABLED=false
     healthcheck:

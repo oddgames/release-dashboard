@@ -129,30 +129,30 @@ function generateASCToken() {
     return cachedASCToken;
   }
 
-  const keyPath = path.join(__dirname, '..', config.fastlane.appStoreConnect.keyPath);
   const ascConfig = config.fastlane.appStoreConnect;
 
   let privateKey;
-  let keyId;
-  let issuerId;
+  let keyId = ascConfig.keyId;
+  let issuerId = ascConfig.issuerId;
 
-  // Support both .p8 files and legacy JSON format
-  if (keyPath.endsWith('.p8')) {
-    // Read .p8 file directly, get keyId and issuerId from config
-    privateKey = fs.readFileSync(keyPath, 'utf8');
-    keyId = ascConfig.keyId;
-    issuerId = ascConfig.issuerId;
+  // Prefer key content from env var, fall back to file
+  if (ascConfig.keyContent) {
+    privateKey = ascConfig.keyContent.replace(/\\n/g, '\n');
   } else {
-    // Legacy JSON format
-    let keyData;
-    try {
-      keyData = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
-    } catch (e) {
-      throw new Error(`Failed to read Apple API key: ${e.message}`);
+    const keyPath = path.join(__dirname, '..', ascConfig.keyPath);
+    if (keyPath.endsWith('.p8')) {
+      privateKey = fs.readFileSync(keyPath, 'utf8');
+    } else {
+      let keyData;
+      try {
+        keyData = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
+      } catch (e) {
+        throw new Error(`Failed to read Apple API key: ${e.message}`);
+      }
+      privateKey = keyData.key.replace(/\\n/g, '\n');
+      keyId = keyData.key_id || keyId;
+      issuerId = keyData.issuer_id || issuerId;
     }
-    privateKey = keyData.key.replace(/\\n/g, '\n');
-    keyId = keyData.key_id;
-    issuerId = keyData.issuer_id;
   }
 
   const expiry = now + (20 * 60); // 20 minutes
@@ -477,13 +477,19 @@ async function getIOSAppInfo(bundleId) {
  * Get authenticated Google Play API client
  */
 async function getPlayClient() {
-  const keyPath = path.join(__dirname, '..', config.fastlane.googlePlay.jsonKeyPath);
+  const gpConfig = config.fastlane.googlePlay;
+  let authOptions;
 
-  const auth = new google.auth.GoogleAuth({
-    keyFile: keyPath,
-    scopes: ['https://www.googleapis.com/auth/androidpublisher']
-  });
+  // Prefer key content from env var, fall back to file
+  if (gpConfig.jsonKeyContent) {
+    const credentials = JSON.parse(gpConfig.jsonKeyContent);
+    authOptions = { credentials, scopes: ['https://www.googleapis.com/auth/androidpublisher'] };
+  } else {
+    const keyPath = path.join(__dirname, '..', gpConfig.jsonKeyPath);
+    authOptions = { keyFile: keyPath, scopes: ['https://www.googleapis.com/auth/androidpublisher'] };
+  }
 
+  const auth = new google.auth.GoogleAuth(authOptions);
   const authClient = await auth.getClient();
   return google.androidpublisher({ version: 'v3', auth: authClient });
 }

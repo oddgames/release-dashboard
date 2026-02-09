@@ -26,17 +26,23 @@ async function initClient() {
   if (analyticsDataClient) return analyticsDataClient;
 
   try {
-    const keyPath = path.join(__dirname, '..', config.fastlane?.googlePlay?.jsonKeyPath || 'fastlane/google_play_key.json');
+    const gpConfig = config.fastlane?.googlePlay || {};
+    let credentials;
 
-    if (!fs.existsSync(keyPath)) {
-      log.warn('firebase-api', 'Service account key not found', { keyPath });
-      return null;
+    // Prefer key content from env var, fall back to file
+    if (gpConfig.jsonKeyContent) {
+      credentials = JSON.parse(gpConfig.jsonKeyContent);
+    } else {
+      const keyPath = path.join(__dirname, '..', gpConfig.jsonKeyPath || 'fastlane/google_play_key.json');
+      if (!fs.existsSync(keyPath)) {
+        log.warn('firebase-api', 'Service account key not found', { keyPath });
+        return null;
+      }
+      credentials = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
     }
 
-    const keyFile = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
-
     authClient = new google.auth.GoogleAuth({
-      credentials: keyFile,
+      credentials,
       scopes: ['https://www.googleapis.com/auth/analytics.readonly']
     });
 
