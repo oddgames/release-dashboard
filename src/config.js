@@ -10,6 +10,9 @@
 const fs = require('fs');
 const path = require('path');
 
+// Load .env file if present (for Docker/Portainer deployments)
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
+
 // Load base config - prefer CONFIG_JSON env var, fall back to config.json file
 let baseConfig = {};
 
