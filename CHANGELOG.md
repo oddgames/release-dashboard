@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.2 (2026-02-10)
+- Replace CONFIG_JSON with individual environment variables for Portainer compatibility
+
 ## v1.1.1 (2026-02-10)
 - Add guard for missing Jenkins baseUrl with clear error message
 

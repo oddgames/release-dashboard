@@ -2,9 +2,8 @@
  * Configuration loader
  *
  * Priority (highest to lowest):
- *   1. Individual environment variables (secrets)
- *   2. CONFIG_JSON env var (full config as JSON string, for Docker/Portainer)
- *   3. config.json file (local development)
+ *   1. Environment variables (set individually or via .env file)
+ *   2. config.json file (local development)
  */
 
 const fs = require('fs');
@@ -13,25 +12,15 @@ const path = require('path');
 // Load .env file if present (for Docker/Portainer deployments)
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
-// Load base config - prefer CONFIG_JSON env var, fall back to config.json file
+// Load config.json as fallback for local development
 let baseConfig = {};
-
-if (process.env.CONFIG_JSON) {
+const configPath = path.join(__dirname, '../config.json');
+if (fs.existsSync(configPath)) {
   try {
-    baseConfig = JSON.parse(process.env.CONFIG_JSON);
-    console.log('Config loaded from CONFIG_JSON environment variable');
+    baseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    console.log('Config loaded from config.json');
   } catch (error) {
-    console.error('Failed to parse CONFIG_JSON:', error.message);
-  }
-} else {
-  const configPath = path.join(__dirname, '../config.json');
-  if (fs.existsSync(configPath)) {
-    try {
-      baseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      console.log('Config loaded from config.json');
-    } catch (error) {
-      console.error('Failed to load config.json:', error.message);
-    }
+    console.error('Failed to load config.json:', error.message);
   }
 }
 
@@ -46,8 +35,7 @@ function parseJsonEnv(name) {
   }
 }
 
-// Environment variable overrides for secrets
-// These take precedence over config.json values
+// Environment variable overrides (all take precedence over config.json)
 const config = {
   ...baseConfig,
 
@@ -67,7 +55,7 @@ const config = {
     baseUrl: process.env.SENTRY_BASE_URL || baseConfig.sentry?.baseUrl || 'https://sentry.io',
     authToken: process.env.SENTRY_AUTH_TOKEN || baseConfig.sentry?.authToken || '',
     organization: process.env.SENTRY_ORG || baseConfig.sentry?.organization || '',
-    statsPeriod: baseConfig.sentry?.statsPeriod || '14d'
+    statsPeriod: process.env.SENTRY_STATS_PERIOD || baseConfig.sentry?.statsPeriod || '14d'
   },
 
   discord: {
@@ -81,18 +69,16 @@ const config = {
       keyId: process.env.ASC_KEY_ID || baseConfig.fastlane?.appStoreConnect?.keyId || '',
       issuerId: process.env.ASC_ISSUER_ID || baseConfig.fastlane?.appStoreConnect?.issuerId || '',
       keyPath: process.env.ASC_KEY_PATH || baseConfig.fastlane?.appStoreConnect?.keyPath || '',
-      // For production, the key content can be passed directly
       keyContent: process.env.ASC_KEY_CONTENT || ''
     },
     googlePlay: {
       jsonKeyPath: process.env.GOOGLE_PLAY_KEY_PATH || baseConfig.fastlane?.googlePlay?.jsonKeyPath || '',
-      // For production, the JSON key can be passed directly
       jsonKeyContent: process.env.GOOGLE_PLAY_KEY_CONTENT || '',
-      developerId: baseConfig.fastlane?.googlePlay?.developerId || ''
+      developerId: process.env.GOOGLE_PLAY_DEVELOPER_ID || baseConfig.fastlane?.googlePlay?.developerId || ''
     }
   },
 
-  // Non-secret config (env var JSON overrides or from base config)
+  // Structured config (JSON env vars or config.json)
   tracks: parseJsonEnv('TRACKS') || baseConfig.tracks || [],
   projects: parseJsonEnv('PROJECTS') || baseConfig.projects || {},
   jobs: parseJsonEnv('JOBS') || baseConfig.jobs || [],
