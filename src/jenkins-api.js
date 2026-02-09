@@ -7,6 +7,10 @@ const { baseUrl, username, apiToken } = config.jenkins;
 const auth = Buffer.from(`${username}:${apiToken}`).toString('base64');
 
 async function jenkinsRequest(endpoint) {
+  if (!baseUrl) {
+    log.warn('jenkins-api', 'Jenkins baseUrl not configured, skipping request', { endpoint: endpoint.substring(0, 80) });
+    throw new Error('Jenkins baseUrl not configured');
+  }
   const url = `${baseUrl}${endpoint}`;
   log.debug('jenkins-api', `GET ${endpoint.substring(0, 60)}...`);
 

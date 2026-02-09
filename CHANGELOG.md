@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.1 (2026-02-10)
+- Add guard for missing Jenkins baseUrl with clear error message
+
 ## v1.1.0 (2026-02-09)
 - Docker/Portainer deployment support with CONFIG_JSON env var
 - Environment variable config for all secrets (no file mounts needed)
