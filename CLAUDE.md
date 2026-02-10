@@ -151,7 +151,10 @@ Deploy via `/deploy` command. This will:
 1. Move unreleased changes below into a versioned CHANGELOG entry
 2. Bump version in package.json
 3. Commit, tag, and push to GitHub
-4. Portainer auto-deploys via webhook
+4. GitHub Actions builds Docker image and pushes to ghcr.io
+5. Portainer pulls the new image on redeploy
+
+Docker image: `ghcr.io/oddgames/release-dashboard:latest`
 
 ### Unreleased Changes
 (none)

@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.8 (2026-02-10)
+- Switch to pre-built Docker images via GitHub Container Registry (ghcr.io)
+- Add GitHub Actions workflow for automated Docker image builds on tag push
+
 ## v1.1.7 (2026-02-10)
 - Show version number in startup log
 

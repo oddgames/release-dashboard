@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   dashboard:
-    build: .
+    image: ghcr.io/oddgames/release-dashboard:latest
     container_name: release-dashboard
     restart: unless-stopped
     ports:
