@@ -37,33 +37,6 @@ app.get('/api/version', (req, res) => {
   });
 });
 
-// IP allowlist middleware
-const allowedIPs = config.allowedIPs || [];
-function isPrivateIP(ip) {
-  if (ip === '127.0.0.1' || ip === '::1') return true;
-  if (ip.startsWith('10.') || ip.startsWith('192.168.')) return true;
-  if (ip.startsWith('172.')) {
-    const second = parseInt(ip.split('.')[1]);
-    if (second >= 16 && second <= 31) return true;
-  }
-  return false;
-}
-if (allowedIPs.length > 0) {
-  app.use((req, res, next) => {
-    const clientIP = req.ip || req.connection.remoteAddress;
-    const normalizedIP = clientIP.replace(/^::ffff:/, '');
-
-    // Always allow private/LAN IPs (localhost, Docker, LAN)
-    if (isPrivateIP(normalizedIP)) return next();
-    // Check public IP allowlist
-    if (allowedIPs.includes(normalizedIP) || allowedIPs.includes(clientIP)) return next();
-
-    log.warn('server', 'Blocked request from unauthorized IP', { ip: normalizedIP });
-    res.status(403).send('Access denied');
-  });
-  log.info('server', `IP allowlist enabled: ${allowedIPs.length} public IPs + all private/LAN`);
-}
-
 app.use(express.static(path.join(__dirname, '../public')));
 
 // SSE endpoint for real-time updates

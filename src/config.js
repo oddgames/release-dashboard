@@ -97,7 +97,6 @@ const config = {
   tracks: parseJsonEnv('TRACKS') || baseConfig.tracks || [],
   projects: parseJsonEnv('PROJECTS') || baseConfig.projects || {},
   jobs: parseJsonEnv('JOBS') || baseConfig.jobs || [],
-  allowedIPs: parseJsonEnv('ALLOWED_IPS') || baseConfig.allowedIPs || [],
   refreshInterval: parseInt(process.env.REFRESH_INTERVAL) || baseConfig.refreshInterval || 60000,
   branchHistoryDays: parseInt(process.env.BRANCH_HISTORY_DAYS) || baseConfig.branchHistoryDays || 30
 };
@@ -119,8 +118,6 @@ console.log(`  googlePlay.developerId: ${config.fastlane.googlePlay.developerId 
 console.log(`  tracks: ${config.tracks.length} defined`);
 console.log(`  projects: ${Object.keys(config.projects).length} defined`);
 console.log(`  jobs: ${config.jobs.length} defined`);
-console.log(`  allowedIPs: ${config.allowedIPs.length} defined`);
-
 if (!config.jenkins.baseUrl) {
   console.warn('Warning: JENKINS_BASE_URL not configured');
 }

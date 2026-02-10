@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.12 (2026-02-10)
+- Remove IP allowlist authentication (server runs without access restrictions)
+
 ## v1.1.11 (2026-02-10)
 - Revert docker-compose to use GHCR image for Portainer (requires registry credentials in Portainer)
 
