@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.15 (2026-02-10)
+- Preserve cached build data when Jenkins API fails (prevents "No recent builds" on transient errors)
+
 ## v1.1.14 (2026-02-10)
 - Remove image tag from docker-compose so Portainer builds from Dockerfile without attempting a pull
 

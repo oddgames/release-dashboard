@@ -308,14 +308,16 @@ async function refreshBuilds(fullRefresh = false) {
           branches
         });
       } catch (error) {
-        console.error(`Error fetching ${displayName}:`, error.message);
+        log.error('server', `Error fetching ${displayName}`, { error: error.message });
         const errProjectConfig = config.projects?.[project.displayName];
+        // Preserve cached branches if available, so a transient API error doesn't wipe data
+        const cachedProject = cache.buildCache.projects?.find(p => p.id === project.id);
         projects.push({
           id: project.id,
           displayName: project.displayName,
           iconUrl: project.iconUrl,
           firebasePropertyId: errProjectConfig?.firebasePropertyId,
-          branches: [],
+          branches: cachedProject?.branches || [],
           error: error.message
         });
       }
