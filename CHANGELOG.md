@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.3 (2026-02-10)
+- Add stack.env for Portainer repo-based deployment
+
 ## v1.1.2 (2026-02-10)
 - Replace CONFIG_JSON with individual environment variables for Portainer compatibility
 
