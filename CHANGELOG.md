@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.16 (2026-02-10)
+- Fall back to latest Jenkins build changeset when Plastic SCM is unavailable (fixes missing build buttons in Docker)
+
 ## v1.1.15 (2026-02-10)
 - Preserve cached build data when Jenkins API fails (prevents "No recent builds" on transient errors)
 

@@ -127,6 +127,21 @@ function extractChangeset(version) {
   return version;
 }
 
+// Fallback: get the highest changeset from Jenkins build versions when Plastic SCM is unavailable
+function getLatestBuildChangeset(tracks) {
+  let highest = null;
+  for (const trackName of ['dev', 'release']) {
+    const track = tracks?.[trackName];
+    if (!track) continue;
+    for (const ver of [track.iosVersion, track.androidVersion]) {
+      if (ver && /^\d+$/.test(ver)) {
+        if (!highest || parseInt(ver) > parseInt(highest)) highest = ver;
+      }
+    }
+  }
+  return highest;
+}
+
 function showToast(message, type = 'info') {
   const toast = document.getElementById('toast');
   toast.textContent = message;
@@ -518,7 +533,7 @@ function render() {
             </div>
           </td>
           ${renderPlasticCell(mainBranch, project.id, mainBranch.tracks)}
-          ${renderTrackCells(mainBranch.tracks, mainBranch.plasticChangeset, project.id, 'main', project.sentry, mainBranch.allCommits)}
+          ${renderTrackCells(mainBranch.tracks, mainBranch.plasticChangeset || getLatestBuildChangeset(mainBranch.tracks), project.id, 'main', project.sentry, mainBranch.allCommits)}
         </tr>
       `;
     } else {
