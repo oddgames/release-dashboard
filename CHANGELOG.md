@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.18 (2026-02-10)
+- Add crashboard endpoint logging for debugging Sentry data flow
+- Improve empty crashboard message
+
 ## v1.1.17 (2026-02-10)
 - Show version number and release date in dashboard header
 - Enable crashboard with live Sentry issue data per project (last 7 days)

@@ -155,14 +155,23 @@ router.get('/analytics', getAllAnalytics);
 
 // Crashboard - Sentry issues per project (last 7 days)
 router.get('/crashboard', async (req, res) => {
+  log.info('server', 'Crashboard request received');
+
   try {
     const crashboard = {};
+    const projectEntries = Object.entries(config.projects || {});
+    log.info('server', `Crashboard: ${projectEntries.length} projects configured`);
 
-    for (const [projectName, projectConfig] of Object.entries(config.projects || {})) {
-      if (!projectConfig.sentryProject) continue;
+    for (const [projectName, projectConfig] of projectEntries) {
+      if (!projectConfig.sentryProject) {
+        log.debug('server', `Crashboard: ${projectName} has no sentryProject configured`);
+        continue;
+      }
 
       try {
+        log.info('server', `Crashboard: fetching Sentry issues for ${projectName} (${projectConfig.sentryProject})`);
         const issues = await sentryApi.getProjectIssues7d(projectConfig.sentryProject);
+        log.info('server', `Crashboard: ${projectName} returned ${issues.length} issues`);
 
         // Build Sentry link (use numeric project ID from first issue if available)
         const linkQuery = 'is:unresolved';

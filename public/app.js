@@ -2513,7 +2513,7 @@ function renderCrashboard() {
   const searchTerm = crashboardSearchTerm.toLowerCase();
 
   if (!crashboardData || Object.keys(crashboardData).length === 0) {
-    content.innerHTML = '<div class="crashboard-empty">No crash data available</div>';
+    content.innerHTML = '<div class="crashboard-empty">No Sentry issues found (0 unresolved in last 7 days)</div>';
     return;
   }
 
