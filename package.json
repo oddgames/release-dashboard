@@ -1,6 +1,6 @@
 {
   "name": "jenkins-dashboard",
-  "version": "1.1.13",
+  "version": "1.1.14",
   "description": "Jenkins build dashboard with store integration",
   "main": "src/server.js",
   "scripts": {

@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.14 (2026-02-10)
+- Remove image tag from docker-compose so Portainer builds from Dockerfile without attempting a pull
+
 ## v1.1.13 (2026-02-10)
 - Switch docker-compose back to local build from Dockerfile (fixes GHCR pull denied errors in Portainer)
 
