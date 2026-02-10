@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.4 (2026-02-10)
+- Add startup config logging with masked secrets for debugging
+
 ## v1.1.3 (2026-02-10)
 - Add stack.env for Portainer repo-based deployment
 

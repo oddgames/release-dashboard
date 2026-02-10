@@ -11,8 +11,21 @@ const path = require('path');
 
 // Load env file (stack.env for Portainer, .env for local dev)
 const envDir = path.join(__dirname, '..');
-require('dotenv').config({ path: path.join(envDir, 'stack.env') });
-require('dotenv').config({ path: path.join(envDir, '.env') });
+const stackEnvPath = path.join(envDir, 'stack.env');
+const dotEnvPath = path.join(envDir, '.env');
+const stackResult = require('dotenv').config({ path: stackEnvPath });
+const dotResult = require('dotenv').config({ path: dotEnvPath });
+
+if (stackResult.error) {
+  console.log(`stack.env: not found (${stackEnvPath})`);
+} else {
+  console.log(`stack.env: loaded ${Object.keys(stackResult.parsed || {}).length} vars`);
+}
+if (dotResult.error) {
+  console.log(`.env: not found`);
+} else {
+  console.log(`.env: loaded ${Object.keys(dotResult.parsed || {}).length} vars`);
+}
 
 // Load config.json as fallback for local development
 let baseConfig = {};
@@ -89,7 +102,25 @@ const config = {
   branchHistoryDays: parseInt(process.env.BRANCH_HISTORY_DAYS) || baseConfig.branchHistoryDays || 30
 };
 
-// Validation warnings
+// Log config summary
+const mask = (s) => s ? s.substring(0, 4) + '***' : '(empty)';
+console.log('Config summary:');
+console.log(`  jenkins.baseUrl: ${config.jenkins.baseUrl || '(empty)'}`);
+console.log(`  jenkins.username: ${config.jenkins.username || '(empty)'}`);
+console.log(`  jenkins.apiToken: ${mask(config.jenkins.apiToken)}`);
+console.log(`  ai.provider: ${config.ai.provider}`);
+console.log(`  ai.apiKey: ${mask(config.ai.apiKey)}`);
+console.log(`  sentry.org: ${config.sentry.organization || '(empty)'}`);
+console.log(`  sentry.authToken: ${mask(config.sentry.authToken)}`);
+console.log(`  asc.keyId: ${config.fastlane.appStoreConnect.keyId || '(empty)'}`);
+console.log(`  asc.keyContent: ${config.fastlane.appStoreConnect.keyContent ? 'set' : '(empty)'}`);
+console.log(`  googlePlay.keyContent: ${config.fastlane.googlePlay.jsonKeyContent ? 'set' : '(empty)'}`);
+console.log(`  googlePlay.developerId: ${config.fastlane.googlePlay.developerId || '(empty)'}`);
+console.log(`  tracks: ${config.tracks.length} defined`);
+console.log(`  projects: ${Object.keys(config.projects).length} defined`);
+console.log(`  jobs: ${config.jobs.length} defined`);
+console.log(`  allowedIPs: ${config.allowedIPs.length} defined`);
+
 if (!config.jenkins.baseUrl) {
   console.warn('Warning: JENKINS_BASE_URL not configured');
 }
