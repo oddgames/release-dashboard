@@ -11,23 +11,41 @@ services:
       # Persistent data (build cache)
       - dashboard-data:/app/data
     environment:
-      - NODE_ENV=production
-      - PORT=3000
-      # Full config as JSON string - paste your entire config.json here
-      # This is the easiest way to configure everything in Portainer
-      - CONFIG_JSON=
-      # Or override individual secrets (these take priority over CONFIG_JSON):
-      # - JENKINS_BASE_URL=
-      # - JENKINS_USERNAME=
-      # - JENKINS_API_TOKEN=
-      # - AI_API_KEY=
-      # - SENTRY_AUTH_TOKEN=
-      # - ASC_KEY_ID=
-      # - ASC_ISSUER_ID=
-      # - ASC_KEY_CONTENT=
-      # - GOOGLE_PLAY_KEY_CONTENT=
-      # - DISCORD_WEBHOOK_URL=
-      # - DISCORD_ENABLED=false
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=${PORT:-3000}
+      # Jenkins
+      - JENKINS_BASE_URL=${JENKINS_BASE_URL}
+      - JENKINS_USERNAME=${JENKINS_USERNAME}
+      - JENKINS_API_TOKEN=${JENKINS_API_TOKEN}
+      # AI
+      - AI_PROVIDER=${AI_PROVIDER:-gemini}
+      - AI_API_KEY=${AI_API_KEY}
+      - AI_MODEL=${AI_MODEL:-gemini-2.5-flash}
+      # Sentry
+      - SENTRY_BASE_URL=${SENTRY_BASE_URL:-https://sentry.io}
+      - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN}
+      - SENTRY_ORG=${SENTRY_ORG}
+      - SENTRY_STATS_PERIOD=${SENTRY_STATS_PERIOD:-14d}
+      # Discord
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - DISCORD_ENABLED=${DISCORD_ENABLED:-false}
+      # App Store Connect
+      - ASC_KEY_ID=${ASC_KEY_ID}
+      - ASC_ISSUER_ID=${ASC_ISSUER_ID}
+      - ASC_KEY_CONTENT=${ASC_KEY_CONTENT}
+      # Google Play
+      - GOOGLE_PLAY_DEVELOPER_ID=${GOOGLE_PLAY_DEVELOPER_ID}
+      - GOOGLE_PLAY_KEY_CONTENT=${GOOGLE_PLAY_KEY_CONTENT}
+      # Fastlane
+      - FASTLANE_WEBHOOK_SECRET=${FASTLANE_WEBHOOK_SECRET}
+      # Structured config (JSON)
+      - TRACKS=${TRACKS}
+      - PROJECTS=${PROJECTS}
+      - JOBS=${JOBS}
+      - ALLOWED_IPS=${ALLOWED_IPS}
+      # Timing
+      - REFRESH_INTERVAL=${REFRESH_INTERVAL:-60000}
+      - BRANCH_HISTORY_DAYS=${BRANCH_HISTORY_DAYS:-30}
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
       interval: 30s

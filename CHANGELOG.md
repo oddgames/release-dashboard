@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.5 (2026-02-10)
+- Fix docker-compose.yml to use ${VAR} substitution from stack.env for Portainer
+
 ## v1.1.4 (2026-02-10)
 - Add startup config logging with masked secrets for debugging
 
