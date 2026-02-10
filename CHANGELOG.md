@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.11 (2026-02-10)
+- Revert docker-compose to use GHCR image for Portainer (requires registry credentials in Portainer)
+
 ## v1.1.10 (2026-02-10)
 - Remove image tag from docker-compose so Portainer builds from source instead of attempting a pull
 
