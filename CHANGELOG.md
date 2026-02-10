@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.19 (2026-02-10)
+- Install Plastic SCM client (cm CLI) in Docker image for changeset data
+- Switch Docker base image from Alpine to Debian-slim for APT compatibility
+
 ## v1.1.18 (2026-02-10)
 - Add crashboard endpoint logging for debugging Sentry data flow
 - Improve empty crashboard message
