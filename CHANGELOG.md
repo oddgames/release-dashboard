@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.7 (2026-02-10)
+- Show version number in startup log
+
 ## v1.1.6 (2026-02-10)
 - Auto-allow private/LAN IPs (localhost, Docker, 10.x, 192.168.x, 172.16-31.x)
 

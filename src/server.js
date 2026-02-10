@@ -110,7 +110,7 @@ function init() {
   // Start server immediately
   app.listen(PORT, () => {
     const elapsed = Date.now() - startTime;
-    log.info('server', `Release Dashboard running at http://localhost:${PORT} (started in ${elapsed}ms)`);
+    log.info('server', `Release Dashboard v${pkg.version} running at http://localhost:${PORT} (started in ${elapsed}ms)`);
     if (hadCache) {
       log.info('server', 'Serving cached data while refreshing in background...');
       // Broadcast cached data immediately so clients can render
