@@ -2600,6 +2600,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Initial fetch after page load
   setTimeout(fetchCrashboard, 500);
+
+  // Fetch and display version
+  fetch('/api/version')
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('appVersion');
+      if (el && data.version) {
+        const date = data.buildDate ? new Date(data.buildDate).toLocaleDateString() : '';
+        el.textContent = `v${data.version}${date ? ' · ' + date : ''}`;
+      }
+    })
+    .catch(() => {});
 });
 
 // Refresh crashboard every 5 minutes

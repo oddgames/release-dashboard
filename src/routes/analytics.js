@@ -153,9 +153,47 @@ async function getAllAnalytics(req, res) {
 router.get('/', getAllAnalytics);
 router.get('/analytics', getAllAnalytics);
 
-// Crashboard - DISABLED
-router.get('/crashboard', (req, res) => {
-  res.json({ success: true, crashboard: {}, disabled: true });
+// Crashboard - Sentry issues per project (last 7 days)
+router.get('/crashboard', async (req, res) => {
+  try {
+    const crashboard = {};
+
+    for (const [projectName, projectConfig] of Object.entries(config.projects || {})) {
+      if (!projectConfig.sentryProject) continue;
+
+      try {
+        const issues = await sentryApi.getProjectIssues7d(projectConfig.sentryProject);
+
+        // Build Sentry link (use numeric project ID from first issue if available)
+        const linkQuery = 'is:unresolved';
+        const org = config.sentry?.organization;
+        const numericId = issues[0]?.project?.id || projectConfig.sentryProject;
+        const link = org
+          ? `https://${org}.sentry.io/issues/?project=${numericId}&query=${encodeURIComponent(linkQuery)}&statsPeriod=7d&sort=freq`
+          : '#';
+
+        crashboard[projectName] = {
+          issues: issues.slice(0, 20).map(issue => ({
+            id: issue.id,
+            title: issue.title,
+            level: issue.level || 'error',
+            count: parseInt(issue.count) || 0,
+            userCount: parseInt(issue.userCount) || 0,
+            link: issue.permalink || '#'
+          })),
+          totalIssues: issues.length,
+          link
+        };
+      } catch (err) {
+        log.warn('server', `Crashboard: failed to fetch ${projectName}`, { error: err.message });
+      }
+    }
+
+    res.json({ success: true, crashboard });
+  } catch (error) {
+    log.error('server', 'Crashboard fetch failed', { error: error.message });
+    res.json({ success: false, error: error.message, crashboard: {} });
+  }
 });
 
 // Get analytics data for a project (daily active users)

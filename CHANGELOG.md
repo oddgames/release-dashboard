@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.17 (2026-02-10)
+- Show version number and release date in dashboard header
+- Enable crashboard with live Sentry issue data per project (last 7 days)
+
 ## v1.1.16 (2026-02-10)
 - Fall back to latest Jenkins build changeset when Plastic SCM is unavailable (fixes missing build buttons in Docker)
 

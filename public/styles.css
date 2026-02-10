@@ -38,6 +38,11 @@ header h1 {
   gap: 15px;
 }
 
+.app-version {
+  color: #555;
+  font-size: 0.75rem;
+}
+
 #lastUpdated {
   color: #888;
   font-size: 0.85rem;

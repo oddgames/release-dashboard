@@ -28,10 +28,13 @@ app.get('/health', (req, res) => {
 });
 
 // Version endpoint (before IP allowlist for monitoring)
+const fs = require('fs');
 const pkg = require('../package.json');
+const pkgBuildDate = fs.statSync(path.join(__dirname, '../package.json')).mtime.toISOString();
 app.get('/api/version', (req, res) => {
   res.json({
     version: pkg.version,
+    buildDate: pkgBuildDate,
     startedAt: new Date().toISOString(),
     node: process.version
   });
