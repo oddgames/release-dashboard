@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.6 (2026-02-10)
+- Auto-allow private/LAN IPs (localhost, Docker, 10.x, 192.168.x, 172.16-31.x)
+
 ## v1.1.5 (2026-02-10)
 - Fix docker-compose.yml to use ${VAR} substitution from stack.env for Portainer
 
