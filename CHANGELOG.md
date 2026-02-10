@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.9 (2026-02-10)
+- Switch docker-compose to local build instead of pulling from GHCR (fixes unauthorized pull errors)
+
 ## v1.1.8 (2026-02-10)
 - Switch to pre-built Docker images via GitHub Container Registry (ghcr.io)
 - Add GitHub Actions workflow for automated Docker image builds on tag push
