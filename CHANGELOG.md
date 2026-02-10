@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.13 (2026-02-10)
+- Switch docker-compose back to local build from Dockerfile (fixes GHCR pull denied errors in Portainer)
+
 ## v1.1.12 (2026-02-10)
 - Remove IP allowlist authentication (server runs without access restrictions)
 

@@ -1,6 +1,7 @@
 services:
   dashboard:
-    image: ghcr.io/oddgames/release-dashboard:latest
+    build: .
+    image: release-dashboard:latest
     container_name: release-dashboard
     restart: unless-stopped
     ports:
