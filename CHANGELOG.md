@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.20 (2026-02-10)
+- Configure Plastic SCM credentials at container startup via PLASTIC_USER/PLASTIC_PASSWORD/PLASTIC_SERVER env vars
+- Add docker-entrypoint.sh to run clconfigureclient before starting the server
+
 ## v1.1.19 (2026-02-10)
 - Install Plastic SCM client (cm CLI) in Docker image for changeset data
 - Switch Docker base image from Alpine to Debian-slim for APT compatibility

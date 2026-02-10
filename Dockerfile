@@ -22,6 +22,10 @@ COPY . .
 # Create data directory for persistent storage
 RUN mkdir -p /app/data
 
+# Copy and make entrypoint executable
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
 # Expose port
 EXPOSE 3000
 
@@ -29,10 +33,11 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
 
-# Run as non-root user for security
+# Run as non-root user for security (with home dir for .plastic4 config)
 RUN groupadd -g 1001 nodejs && \
-    useradd -u 1001 -g nodejs -s /bin/sh nodejs
+    useradd -u 1001 -g nodejs -m -s /bin/sh nodejs
 RUN chown -R nodejs:nodejs /app
 USER nodejs
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["node", "src/server.js"]
