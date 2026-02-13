@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.24 (2026-02-13)
+- Make Plastic SCM install non-fatal so server starts even if APT repo is unavailable
+
 ## v1.1.23 (2026-02-13)
 - Switch docker-compose from local build to ghcr.io pre-built image for reliable Portainer deploys
 
