@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.25 (2026-02-13)
+- Fix Plastic SCM GPG key import (use gpg --dearmor instead of deprecated apt-key)
+- Add verbose logging to entrypoint for debugging install/config issues
+
 ## v1.1.24 (2026-02-13)
 - Make Plastic SCM install non-fatal so server starts even if APT repo is unavailable
 
