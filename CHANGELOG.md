@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.26 (2026-02-13)
+- Download Plastic SCM .deb directly instead of using APT repo (fixes install failures)
+- Auto-fix missing dependencies with dpkg + apt-get install -f
+
 ## v1.1.25 (2026-02-13)
 - Fix Plastic SCM GPG key import (use gpg --dearmor instead of deprecated apt-key)
 - Add verbose logging to entrypoint for debugging install/config issues

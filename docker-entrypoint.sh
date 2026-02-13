@@ -4,21 +4,27 @@
 if [ -n "$PLASTIC_USER" ] && [ -n "$PLASTIC_PASSWORD" ] && [ -n "$PLASTIC_SERVER" ]; then
   if ! command -v cm >/dev/null 2>&1; then
     echo "=== Installing Plastic SCM client ==="
-    # Use modern gpg keyring approach (apt-key is deprecated in Debian 12+)
-    echo "Adding Plastic SCM GPG key..."
-    wget -qO - https://www.plasticscm.com/plasticrepo/stable/debian/Release.key | gpg --dearmor -o /usr/share/keyrings/plasticscm-stable.gpg 2>&1
-    echo "deb [signed-by=/usr/share/keyrings/plasticscm-stable.gpg] https://www.plasticscm.com/plasticrepo/stable/debian ./" > /etc/apt/sources.list.d/plasticscm-stable.list
-    echo "Updating package lists..."
-    if apt-get update 2>&1; then
-      echo "Installing plasticscm-client-core..."
-      if apt-get install -y --no-install-recommends plasticscm-client-core 2>&1; then
-        rm -rf /var/lib/apt/lists/*
-        echo "=== Plastic SCM client installed successfully ==="
+    # Download .deb directly (bypasses APT repo issues)
+    DEB_URL="https://www.plasticscm.com/plasticrepo/stable/debian/amd64/plasticscm-client-core_11.0.16.9943_amd64.deb"
+    DEB_FILE="/tmp/plasticscm-client-core.deb"
+    echo "Downloading: $DEB_URL"
+    if wget -q -O "$DEB_FILE" "$DEB_URL" 2>&1; then
+      echo "Download complete ($(du -h "$DEB_FILE" | cut -f1))"
+      echo "Installing .deb package..."
+      if dpkg -i "$DEB_FILE" 2>&1; then
+        echo "=== Plastic SCM client installed ==="
       else
-        echo "WARNING: apt-get install plasticscm-client-core failed"
+        echo "dpkg failed, attempting to fix dependencies..."
+        apt-get update -qq 2>&1 && apt-get install -f -y 2>&1
+        if command -v cm >/dev/null 2>&1; then
+          echo "=== Plastic SCM client installed (with dependency fix) ==="
+        else
+          echo "WARNING: Plastic SCM install failed"
+        fi
       fi
+      rm -f "$DEB_FILE"
     else
-      echo "WARNING: apt-get update failed"
+      echo "WARNING: Failed to download Plastic SCM .deb"
     fi
   else
     echo "Plastic SCM client already installed: $(cm version 2>/dev/null || echo 'unknown version')"
