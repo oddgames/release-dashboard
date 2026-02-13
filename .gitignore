@@ -3,6 +3,7 @@ node_modules/
 
 # Environment and secrets
 .env
+stack.env
 config.json
 
 # Local data
