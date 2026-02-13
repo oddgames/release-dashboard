@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.23 (2026-02-13)
+- Switch docker-compose from local build to ghcr.io pre-built image for reliable Portainer deploys
+
 ## v1.1.22 (2026-02-13)
 - Fix CRLF line endings in docker-entrypoint.sh (caused entrypoint to silently fail on Linux)
 - Add .gitattributes to enforce LF endings for shell scripts
