@@ -2,7 +2,7 @@ FROM node:20-slim
 
 # Install prerequisites for Plastic SCM installation at runtime
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends apt-transport-https gnupg wget && \
+    apt-get install -y --no-install-recommends ca-certificates wget && \
     rm -rf /var/lib/apt/lists/*
 
 # Create app directory

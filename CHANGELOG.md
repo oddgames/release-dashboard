@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.27 (2026-02-13)
+- Add ca-certificates to Docker image (fixes HTTPS certificate errors for Plastic SCM download)
+
 ## v1.1.26 (2026-02-13)
 - Download Plastic SCM .deb directly instead of using APT repo (fixes install failures)
 - Auto-fix missing dependencies with dpkg + apt-get install -f
