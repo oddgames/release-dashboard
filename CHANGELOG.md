@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.21 (2026-02-13)
+- Move Plastic SCM install from Docker build to runtime entrypoint (fixes GitHub Actions build failure)
+- Entrypoint runs as root for apt install, then drops to nodejs user
+
 ## v1.1.20 (2026-02-10)
 - Configure Plastic SCM credentials at container startup via PLASTIC_USER/PLASTIC_PASSWORD/PLASTIC_SERVER env vars
 - Add docker-entrypoint.sh to run clconfigureclient before starting the server
