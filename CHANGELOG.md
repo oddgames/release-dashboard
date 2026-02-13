@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.22 (2026-02-13)
+- Fix CRLF line endings in docker-entrypoint.sh (caused entrypoint to silently fail on Linux)
+- Add .gitattributes to enforce LF endings for shell scripts
+
 ## v1.1.21 (2026-02-13)
 - Move Plastic SCM install from Docker build to runtime entrypoint (fixes GitHub Actions build failure)
 - Entrypoint runs as root for apt install, then drops to nodejs user
